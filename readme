@@ -1,0 +1,11 @@
+This is the XHIBIT Display localproxy.
+
+It is called by the CDU, giving the MAC Address of the CDU.
+
+I uses the Mac Address to lookup from local proxy database the attributes
+of the CDU, including the URL of the page to display.
+
+It uses the URL to fetch the content and then uses a local python script to
+transform the HTML fetched to XML, and finally, enriches the XML with data
+from the local proxy database to be used by the CDU (e.g. the CDU title and
+location).

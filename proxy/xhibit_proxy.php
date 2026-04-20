@@ -1,5 +1,4 @@
 <?php
-
 define("INI_FILE", "proxy.ini");
 define("DB_INI_FILE", "DB_INI_FILE");
 define("PARSER", "PARSER_SCRIPT");
@@ -44,19 +43,12 @@ if (isset($_GET[HTTP_MAC])) {
 		}
 	} else {
 		$systemCmd = $parserScript . ' ' .escapeshellarg($macAddress) . ' ' . escapeshellarg($dbIniFile) . ' "0"';
-	}	
+	}
+	//print ("System Cmd: $systemCmd");
+	
 	// force response type to XML
 	header('Content-type: application/xml');
-	
-	// Need to test to see if we're running Windows or Linux
-	// This is used to set the endcoding for Python to UTF-8 but a different method is required for each OS
-	if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-		putenv("PYTHONIOENCODING=utf-8");
-	} else {
-		$systemCmd = "PYTHONIOENCODING=utf-8" . " ".  $systemCmd;
-	}
-
-	system ($systemCmd);
+	system($systemCmd);
 	//print ($systemCmd);
 	
 } else {

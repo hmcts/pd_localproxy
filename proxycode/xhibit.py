@@ -1,18 +1,17 @@
+#
 # File: xhibit.py
 #
+# Author: Harjevaan Hayer
+#
 # Change History
+#
 # Date         Author            Reason
 # 2016-04-09   Warren Ayling     Removed ScreenX and ScreenY against the CDU. Added Powersave Schedule against SITE.
 # 2016-04-09   Warren Ayling     Added "VERSION" element to the CDU, being a fixed version associated with this script.
 # 2016-04-10   Warren Ayling     Introducing a new command line argument to only return CDU data.
 # 2016-04-15   Sean Bulley       Renamed the "COURT_ROOM" XML element, and always added powersave element with ENABLED/DISABLD value
-# 2016-12-01   Sean Bulley       Added "Welsh Title" as an XML element, also support for new URL Mapping table
-# 2016-12-28   Sean Bulley       General tidy and setting config for prod - Updated version to 1.1.0
-# 2017-02-11   Sean Bulley	 Ready for NRO, updating to V2
 #
-
-# This is the version number for the PROXY application
-CONST_VERSION = "p1.0.0"
+CONST_VERSION = "1.0.2"
 
 import pymysql
 import sys
@@ -37,9 +36,10 @@ error = False
 errorMsg = ''
 errorCode = ''
 
-# Logging config, can either be CRITICAL for prod or DEBUG for test/dev
-logging.basicConfig(filename='xhibit.log',level=logging.CRITICAL, filemode="w")
+logging.basicConfig(filename='xhibit.log',level=logging.DEBUG, filemode="w")
 logging.debug('Start logging')
+
+#need to add http://localhost/xhibit/ to hardcode url where url is fetched
 
 #command line format:
 #   "python xhibit.py MACADDRESS PATHTOINIFILE <optional: CURRENTPAGEINDEX [number: 0 or more]> <optional: data_refresh [number: 1]>"
@@ -160,7 +160,7 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 			logging.debug("No info")
 		else:
 			logging.debug("Info")
-			# Inspect various different HTML responses from the XHIBIT Public Display application to establish page type - supports both English and Welsh content pages
+			# need to inspect various different HTML responses from the XHIBIT Public Display application
 			# 1. Daily List => page title is "Public Display: Daily List"
 			# 2. Court Room Detail => page title is "Public Display: Court <number> Detail"; it ends with "Detail"
 			# 3. Court Room List => page title is "Public Display: Court 1 List"; it ends with "List" but it is not "Public Display: Daily List"
@@ -194,14 +194,14 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 			elif pageTitle.endswith("Statws Pob Achos"):
 				pageType = "All Case Status"
 				logging.debug("Type: All case status")
-			elif pageTitle == ("Public Display: Crynodeb yn ônw"):
+			elif pageTitle.endswith("Crynodeb yn Ã´nw"):
 				pageType = "Summary by Name"
 				logging.debug("Type: summary by name")
-			elif pageTitle.endswith("Rhestr"):
+			elif pageTitle != "Public Display: Rhestr Ddyddiol" and pageTitle.endswith("Rhestr"):
 				pageType = "Court List"
 				logging.debug("Type: Court list")
-			elif pageTitle.endswith("Manylion "):
-				pageType = "Court Detail"
+			elif pageTitle.endswith("Detail"):
+				pageType = "Manylion"
 				logging.debug("Type: Court detail")
 			elif pageTitle == "Public Display: Rhestr Ddyddiol":
 				pageType = "Daily List"
@@ -237,7 +237,7 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 
 def formatXML(cduXML, pageXML, contentsXML):
 	logging.debug("formatXML")
-	xmlStr = '<?xml version="1.0" encoding="UTF-8"?>'
+	xmlStr = '<?xml version="1.0" encoding="ISO-8859-1"?>'
 	#xmlStr = xmlStr + '\n<?xml-stylesheet type="text/xsl" href="example-xhibit.xsl"?>'
 	xmlStr = xmlStr + "\n<COURT>"
 	
@@ -586,7 +586,7 @@ def parseDB(macAddress):
 		#find the cdu with the MAC address passed to the script - using SQL aliases to name obtuse columns, using a "IFNULL" condition
 		#  to decide the priority of the XSL from either CDU or SITE
 		logging.debug("database mac %s" % macAddress.upper())
-		sql = "SELECT CDU.title as title, CDU.location as location, CDU.notification as notification, CDU.macAddress as macAddress, urlMappings.url as url, CDU.refresh as refresh, SITE.title as site, SITE.pageUrl as pageUrl, SITE.powersaveSchedule, SITE.welshTitle FROM CDU, SITE, urlMappings WHERE CDU.fkSITE = SITE.id AND UPPER(CDU.macAddress)='"+macAddress.upper()+"' AND urlMappings.cduID = CDU.id"
+		sql = "SELECT CDU.title as title, location, notification, macAddress, url, refresh, SITE.alert, SITE.title as site, SITE.pageUrl as pageUrl, IFNULL(CDU.xsl, SITE.xsl) as xsl, SITE.powersaveSchedule FROM CDU, SITE WHERE CDU.fkSITE = SITE.id AND UPPER(CDU.macAddress)='" + macAddress.upper() + "'"
 		# execute the SQL query using execute() method.
 		logging.debug("SQL: %s" % sql)
 		cursor.execute(sql)
@@ -625,6 +625,7 @@ def parseDB(macAddress):
 # url: is the index URL
 # pageUrl: is the base URL
 def formatCDU(row):
+	global pageIsEnglish
 	try:
 		myUrl = row['url']
 		myPageUrl = row['pageUrl']
@@ -634,7 +635,6 @@ def formatCDU(row):
 		
 		xmlStr = xmlStr + "\n\t\t<VERSION>%s</VERSION>" % CONST_VERSION
 		xmlStr = xmlStr + "\n\t\t<SITE-TITLE>%s</SITE-TITLE>" % row['site']
-		xmlStr = xmlStr + "\n\t\t<SITE-TITLE-WELSH>%s</SITE-TITLE-WELSH>" % row['welshTitle']
 		xmlStr = xmlStr + "\n\t\t<TITLE>%s</TITLE>" % row['title']
 		xmlStr = xmlStr + "\n\t\t<LOCATION>%s</LOCATION>" % row['location']
 		xmlStr = xmlStr + "\n\t\t<MAC-ADDR>%s</MAC-ADDR>" % row['macAddress'].upper()
@@ -654,7 +654,7 @@ def formatCDU(row):
 
 		xmlStr = xmlStr + "\n\t\t<REFRESH>%s</REFRESH>" % str(row['refresh'])
 		xmlStr = xmlStr + "\n\t\t<URL>%s</URL>" % row['url']
-		xmlStr = xmlStr + "\n\t\t<XSL>%s</XSL>" % "new"
+		xmlStr = xmlStr + "\n\t\t<XSL>%s</XSL>" % row['xsl']
 
 		xmlStr = xmlStr + "\n\t</CDU>"
 
@@ -817,16 +817,18 @@ if not error and (macValid and os.path.isfile(iniLoc)):
 		
 		if not error:
 			# obtain the site URL to fetch
+			logging.debug("Getting URL to fetch")
 			currentPageIndex, siteUrl = formatUrl(url, pageUrl, currentPageIndex, dataRefresh)
 			#if currentPageIndex is not None:
 			#	print("Current Page Index " + currentPageIndex + "\n")
 			#print("Site Url " + siteUrl + "\n")
 			# capture the index URL - in case need for error reporting
 			errorUrl = url
-
 		if not error and not cduOnly:
+			logging.debug("fetching XHIBIT page")
 			# now fetch the XHIBIT page
 			try:
+				logging.debug("fetching XHIBIT page")
 				logging.debug("siteUrl: " + siteUrl)
 				xhibitContents = urllib.request.urlopen(siteUrl)
 				logging.debug("type: " + type(xhibitContents).__name__)
@@ -846,6 +848,7 @@ if not error and (macValid and os.path.isfile(iniLoc)):
 				
 				if not error:
 					# first extract the page detail
+					logging.debug("Attempting to extract details")
 					pageType, pageXML = formatPageXML(soup, currentPageIndex, url)
 					logging.debug(pageType)
 					logging.debug(pageXML)
@@ -865,7 +868,6 @@ if not error and (macValid and os.path.isfile(iniLoc)):
 			# now format the full XML to return
 			logging.debug("Printing full XML to file")
 			fullXML = formatXML(cduXML, pageXML, contentsXML)
-			#print (sys.stdout.encoding)
 			print (fullXML)
 			# print just XML to file 
 			#f = open('output.xml','w')
