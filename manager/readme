@@ -1,0 +1,9 @@
+This is the XHIBIT Manager in PHP.
+
+It is used to maintain the localproxy database with aspects of CDU and site
+configuration including:
+1. Mapping CDU to source URL
+2. CDU Title, description and location.
+3. CDU notification (ticker message).
+4. Site name.
+5. Site Alert message.

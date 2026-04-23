@@ -1,0 +1,6 @@
+<?php
+/*
+ * visitorLogDB.php
+ * 
+ */
+ ?>

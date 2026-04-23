@@ -1,0 +1,67 @@
+@import url("font-awesome.min.css");
+
+body {
+    background-color: #F9F9F9;
+	font-family: tahoma, arial;
+}
+
+h1 {
+    color: navy;
+    margin-left: 20px;
+    text-align: center;
+}
+
+code {
+    font-family: courier, arial;
+    color: red;
+}
+
+code.title {
+    font-family: courier, arial;
+    color: dark-blue;
+}
+
+code.emphasis {
+    font-family: courier, arial;
+    font-style: italic;
+    color: green;
+}
+
+p.info {
+	/*background-color: #FFFFFF;*/
+}
+
+td {
+	vertical-align: top;
+	/*font-family: courier;*/
+}
+
+table.results {
+    border-collapse: collapse;
+	border-spacing: 10px 50px;
+}
+
+table.results, th.results, td.results {
+    border: 1px solid gray;
+	padding: 25px 30px;
+}
+
+input[type=text] {
+	font-family: courier;
+	font-size: 10pt;
+}
+textarea {
+	font-family: courier;
+	font-size: 10pt;
+}
+
+p.user {
+	font-family: tahoma, arial;
+	font-size: 14pt;
+	color: #red;
+}
+span.username {
+	font-family: courier;
+	font-size: 14pt;
+	color: red;
+}

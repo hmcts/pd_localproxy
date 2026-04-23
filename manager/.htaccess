@@ -1,0 +1,5 @@
+AuthType Basic
+
+AuthName "XHIBIT Display Manager"
+AuthUserFile "C:\wamp\manager.pass"
+Require valid-user
