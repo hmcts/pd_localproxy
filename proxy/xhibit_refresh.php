@@ -24,6 +24,14 @@ if (isset($_GET[HTTP_MAC])) {
 	
 	// force response type to XML
 	header('Content-type: application/xml');
+	
+	// Need to test to see if we're running Windows or Linux
+	// This is used to set the endcoding for Python to UTF-8 but a different method is required for each OS
+	if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+		putenv("PYTHONIOENCODING=utf-8");
+	} else {
+		$systemCmd = "PYTHONIOENCODING=utf-8" . " ".  $systemCmd;
+	}
 	system($systemCmd);
 	//print ($systemCmd);
 	
