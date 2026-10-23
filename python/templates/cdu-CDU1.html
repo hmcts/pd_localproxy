@@ -1,0 +1,23 @@
+<br/><br/>
+<section id="CDU">
+	<center>
+	<form id="cdu" name="cdu" method="post" action="cdu.php">
+		<input type="hidden" name="id" value="${CDUindex}"/>
+		<input type="hidden" name="csrfToken" value="${csrfToken}"/>
+		<table class="results">
+			<tr><th>Title</th><th>Location</th><th colspan="2">Description</th></tr>
+			<tr>
+				<td class="results"><input type="text" name="title" size="30" maxlength="30" value="${title}"/></td>
+				<td class="results"><input type="text" name="location" size="30" maxlength="50" value="${location}"/></td>
+				<td class="results" colspan="3"><textarea name="description" rows="5" cols="40">${description}</textarea></td>
+			</tr>
+			<tr><th>MAC Address</th><th>Screen X</th><th>Screen Y</th><th>Refresh</th><th>XSLt</th></tr>
+			<tr>
+				<td class="results"><input type="text" name="macAddress" size="17" maxlength="50" value="${macAddress}"/></td>
+				<td class="results">&nbsp;</td>
+				<td class="results">&nbsp;</td>
+				<td class="results"><input type="text" name="refresh" size="2" maxlength="2" value="${refresh}"/></td>
+				<!--<td class="results"><input type="text" name="xsl" size="15" maxlength="30" value="${xsl}"/></td-->
+					${xsl}<br/>
+				<td class="results">
+					<select name="xsl" autocomplete="off">
