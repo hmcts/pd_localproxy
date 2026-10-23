@@ -8,6 +8,7 @@ xsltproc, and the application's parser dependencies. No packages are installed.
 import argparse
 import atexit
 import base64
+import binascii
 import io
 import json
 import os
@@ -135,7 +136,9 @@ class LocalStack(object):
         self.db.connection.commit()
         ops = '[DATABASE]\n' + ''.join(key + '=' + values[key] + '\n' for key in
                 ('DBConn', 'DBName', 'DBusername', 'DBpasswd'))
-        ops += '[VIEW]\nShowProgress=false\n[XHIBIT]\nurl=' + self.feed_url + '/page.php?uri=\n'
+        # Disposable per-run manager CSRF secret, generated as config/ops.ini.example describes.
+        ops += '[VIEW]\nShowProgress=false\nmanagerCsrfSecret=' + binascii.hexlify(os.urandom(32)).decode('ascii') + '\n'
+        ops += '[XHIBIT]\nurl=' + self.feed_url + '/page.php?uri=\n'
         ops += '[PROXY]\nproxy=' + self.proxy_url + '/proxy/xhibit_proxy.php\n[CDU]\ncdu=' + self.cdu_url + '/index.php\n'
         ops += '[SOFTWARE]\ncduArchive=' + self.temp + '/cdu.tar\n'
         ops_path = self.write('ops.ini', ops)

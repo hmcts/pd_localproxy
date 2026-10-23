@@ -8,7 +8,8 @@ cdu.tar. Legacy .php URLs are Apache aliases, not PHP source files.
 Manager is optional, default OFF and not production-verified. Use --with-manager
 consistently for packaging, Apache generation and preflight to include it.
 Existing form field names and database/audit semantics remain unchanged; output
-escaping and a CSRF token check are security-only additions.
+escaping and a CSRF token check are security-only additions. The manager needs a
+random managerCsrfSecret (see config/ops.ini.example) or it refuses all POSTs.
 
 See migration/README.md and migration/VALIDATION.md for build/test/pilot/rollback
 instructions and outstanding gates. Keep pd_cdu alongside this checkout.

@@ -160,6 +160,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(output.getvalue(),b'PNG fixture')
         self.assertFalse(os.path.exists(target))
         self.assertEqual(popen.call_args[1]['stdout'],subprocess.DEVNULL)
+        self.assertTrue(popen.call_args[1]['start_new_session'])
         process.wait.assert_called_once_with(timeout=50)
         self.assertFalse(process.kill.called)
         for invalid in ['../outside','name-with-spaces -f other','a'*32+'-www-data\n']:
@@ -188,10 +189,12 @@ class PackageTests(unittest.TestCase):
                 if make: make(target)
                 return process
             code=None
+            process.pid=987654
             with mock.patch('sys.argv',[helper,basename]), mock.patch('sys.stdout',stdout), mock.patch('signal.signal'), \
-                    mock.patch('subprocess.Popen',side_effect=capture) as popen:
+                    mock.patch('subprocess.Popen',side_effect=capture) as popen, mock.patch('os.killpg') as killpg:
                 try: runpy.run_path(helper,run_name='__main__')
                 except SystemExit as exc: code=exc.code
+            process.killpg=killpg
             return code, output.getvalue(), popen, process, target
         # Written through a symlink or a hard link to another capture-owner file: never streamed.
         for make in (lambda target: os.symlink(secret,target), lambda target: os.link(secret,target)):
@@ -203,10 +206,12 @@ class PackageTests(unittest.TestCase):
         code, output, popen, process, target = run(existing=lambda target: os.symlink(secret,target))
         self.assertEqual((code,output,popen.called),(1,b'',False))
         self.assertTrue(os.path.islink(target))
-        # A capture that does not finish is killed and produces no output.
+        # A capture that does not finish is killed with its whole process group; no output.
+        import signal
         code, output, popen, process, target = run(make=lambda target: open(target,'wb').close(), hang=True)
         self.assertEqual((code,output),(1,b''))
-        self.assertTrue(process.kill.called)
+        process.killpg.assert_called_once_with(987654,signal.SIGKILL)
+        self.assertFalse(process.kill.called)
         self.assertFalse(os.path.lexists(target))
 
     def test_preflight_reports_legacy_percent_escapes_without_printing_values(self):
@@ -221,22 +226,73 @@ class PackageTests(unittest.TestCase):
         self.assertFalse(any('DBName' in failure or 'DBusername' in failure for failure in report['failures']))
         self.assertNotIn('canary',output)
         self.assertFalse(any('managerCsrfSecret' in failure for failure in report['failures']))
-        with io.open(config,'w',encoding='utf-8') as stream:
-            stream.write('[DATABASE]\nDBConn = "mysql:host=localhost"\nDBName = localproxy\nDBusername = account\nDBpasswd =\n')
-        process=subprocess.Popen([sys.executable,DEPLOY,'preflight','localproxy','--config',config,'--with-manager'],stdout=subprocess.PIPE)
-        report=json.loads(process.communicate()[0].decode('utf-8'))
-        self.assertIn('Manager CSRF key: set managerCsrfSecret when DBpasswd is empty',report['failures'])
+
+    def test_manager_preflight_requires_a_long_random_csrf_secret(self):
+        config=os.path.join(self.temp,'ops.ini')
+        message='Manager requires managerCsrfSecret: a random value of at least 32 bytes (see config/ops.ini.example); POSTs are refused without it'
+        for secret, rejected in [(None,True), ('changeme-canary',True), ('REPLACE_WITH_RANDOM_SECRET',True),
+                                 ('REPLACE_WITH_RANDOM_SECRET_OF_64_HEX_CHARACTERS',True), ('ab'*15+'c',True),
+                                 ('0123456789abcdef'*4,False)]:
+            with io.open(config,'w',encoding='utf-8') as stream:
+                stream.write('[DATABASE]\nDBConn = "mysql:host=localhost"\nDBName = localproxy\nDBusername = account\n'
+                             'DBpasswd = long-database-password-is-not-a-csrf-key\n'
+                             + ('' if secret is None else '[VIEW]\nmanagerCsrfSecret = ' + secret + '\n'))
+            os.chmod(config,0o600)
+            process=subprocess.Popen([sys.executable,DEPLOY,'preflight','localproxy','--config',config,'--with-manager'],stdout=subprocess.PIPE)
+            output=process.communicate()[0].decode('utf-8')
+            self.assertEqual(message in json.loads(output)['failures'],rejected,secret)
+            self.assertNotIn('canary',output)
 
     def test_preflight_validates_verified_model_court_stylesheets(self):
         if not shutil.which('xsltproc'): self.skipTest('xsltproc unavailable')
         config=os.path.join(self.temp,'cdu.ini')
         with io.open(config,'w',encoding='utf-8') as stream:
-            stream.write('[HOST]\nlastUpdatedLocation='+os.path.join(self.temp,'updated')+'\ntimestampMonitorFile='+os.path.join(self.temp,'lastRun')+'\n[SCREENSHOT]\nscreenshotScript='+__file__+'\n')
+            stream.write('[HOST]\nlastUpdatedLocation='+os.path.join(self.temp,'updated')+'\ntimestampMonitorFile='+os.path.join(self.temp,'lastRun')+'\n')
         os.chmod(config,0o600)
         process=subprocess.Popen([sys.executable,DEPLOY,'preflight','cdu','--install-root',os.path.join(ROOT,'pd_cdu'),'--config',config],stdout=subprocess.PIPE)
         report=json.loads(process.communicate()[0].decode('utf-8'))
         self.assertNotIn('Invalid/missing stylesheet: new/no-info.xsl',report['failures'])
         self.assertTrue(any('config key' in failure for failure in report['failures']))
+        self.assertFalse(os.path.exists(os.path.join(self.temp,'updated')))
+
+    def test_cdu_preflight_reads_runtime_settings_timeouts_helper_and_sudo_rule(self):
+        if not shutil.which('xsltproc'): self.skipTest('xsltproc unavailable')
+        helper=os.path.join(self.temp,'xhibit-capture')
+        with open(helper,'wb') as stream: stream.write(b'#!/bin/sh\nexit 99\n')
+        sudo=os.path.join(self.temp,'sudo')
+        calls=os.path.join(self.temp,'sudo-calls')
+        def configure(sudo_exit, **extra):
+            with io.open(sudo,'w',encoding='utf-8') as stream:
+                stream.write('#!/bin/sh\nprintf "%s\\n" "$@" >> '+calls+'\nexit '+str(sudo_exit)+'\n')
+            os.chmod(sudo,0o700)
+            values=dict(fetch='http://127.0.0.1:1/proxy/xhibit_proxy.php', timeout='3', macAddressCmd='"exit 1" ; comment',
+                        lastUpdatedLocation=os.path.join(self.temp,'updated'), timestampMonitorFile=os.path.join(self.temp,'lastRun'),
+                        sudo=sudo, captureHelper=helper)
+            values.update(extra)
+            config=os.path.join(self.temp,'cdu.ini')
+            with io.open(config,'w',encoding='utf-8') as stream:
+                stream.write(''.join(key+' = '+value+'\n' for key,value in sorted(values.items())))
+            os.chmod(config,0o600)
+            process=subprocess.Popen([sys.executable,DEPLOY,'preflight','cdu','--install-root',os.path.join(ROOT,'pd_cdu'),
+                                      '--config',config],stdout=subprocess.PIPE)
+            return json.loads(process.communicate()[0].decode('utf-8'))
+        os.chmod(helper,0o600)
+        report=configure(1, transformTimeout='sixty', macCommandTimeout='-1', screenshotTimeout='nan', defaultMacAddress='aa:bb:cc:dd:ee:ff')
+        for message in ['Config transformTimeout must be a positive number of seconds',
+                        'Config macCommandTimeout must be a positive number of seconds',
+                        'Config screenshotTimeout must be a positive number of seconds',
+                        'Missing or non-executable captureHelper: '+helper,
+                        'sudo -n rule for captureHelper as xhibit is not available to this account']:
+            self.assertIn(message,report['failures'])
+        self.assertNotIn('Config timeout must be a positive number of seconds',report['failures'])
+        self.assertEqual(report['warnings'],['defaultMacAddress is ignored: empty macAddressCmd output requests 00:00:00:00:00:00'])
+        with open(calls,'rb') as stream:
+            self.assertEqual(stream.read().decode('ascii').splitlines(),['-n','-l','-u','xhibit',helper,'0'*32+'-www-data'])
+        os.chmod(helper,0o700)
+        report=configure(0, timeout='"3.5" ; seconds', transformTimeout='60', screenshotTimeout='45')
+        self.assertEqual(report['failures'],[])
+        self.assertEqual(report['warnings'],[])
+        self.assertIn('sudo -n rule for captureHelper as xhibit is available to this account',report['checks'])
         self.assertFalse(os.path.exists(os.path.join(self.temp,'updated')))
 
 

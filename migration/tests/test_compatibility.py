@@ -4,7 +4,6 @@ import ast
 import configparser
 import contextlib
 import datetime
-import importlib.util
 import io
 import json
 import os
@@ -20,27 +19,29 @@ LP = os.path.join(ROOT, 'pd_localproxy')
 CDU = os.path.join(ROOT, 'pd_cdu')
 sys.path.insert(0, os.path.join(LP, 'python'))
 sys.path.insert(0, os.path.join(LP, 'proxy'))
-sys.path.insert(0, os.path.join(CDU, 'python'))
+# Both repositories have a python/http_support.py. The localproxy, manager and
+# software tests must run this repository's copy, and the CDU tests pd_cdu's.
+for name in ('http_support', 'cdu'):
+    sys.modules.pop(name, None)
 import http_support
 import localproxy
 import manager
-import cdu
 from database import Database
 
+
+def import_cdu():
+    sys.modules.pop('http_support')
+    sys.path.insert(0, os.path.join(CDU, 'python'))
+    try:
+        import cdu
+        return cdu, sys.modules['http_support']
+    finally:
+        sys.path.remove(os.path.join(CDU, 'python'))
+        sys.modules['http_support'] = http_support  # later lazy imports (software, manager) use this repository's
+
+
+cdu, cdu_http_support = import_cdu()
 MAC = 'b8:27:eb:67:75:8f'
-
-
-def load_source(name, path):
-    # pd_cdu/python is first on sys.path, so "http_support" above is the CDU copy.
-    spec = importlib.util.spec_from_file_location(name, path)
-    if hasattr(importlib.util, 'module_from_spec'):
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    return spec.loader.load_module()  # Python 3.4 test harness, not application code.
-
-
-lp_http_support = load_source('lp_http_support', os.path.join(LP, 'python', 'http_support.py'))
 ROW = dict(title='Court 1', location='Reception', notification='Notice', macAddress=MAC,
            url='one;two', refresh=15, site='Test Court', pageUrl='http://internal/page.php?',
            powersaveSchedule='[]', welshTitle='Llys Prawf')
@@ -89,6 +90,41 @@ def xml_fixture(page='Daily List', xsl='new'):
 </DETAIL></ROOM></COURT>''').format(xsl, page).encode('utf-8')
 
 
+def notification_literal(body):
+    """Decode the stylesheets' var NOTIFICATION = '...'; as JavaScript would.
+
+    Raises ValueError for anything that is not one valid single-quoted literal
+    statement inside the script element (unescaped quote or line terminator, or
+    a "</script" that would end the element early).
+    """
+    text = body.decode('utf-8')
+    marker = "var NOTIFICATION = '"
+    start = index = text.index(marker) + len(marker)
+    escapes = {'n': '\n', 'r': '\r', 't': '\t', 'b': '\b', 'f': '\f', 'v': '\v', '0': '\0'}
+    value = []
+    while text[index] != "'":
+        char = text[index]
+        if char in '\r\n\u2028\u2029':
+            raise ValueError('unescaped line terminator in string literal')
+        if char != '\\':
+            value.append(char)
+            index += 1
+        elif text[index + 1] in 'xu':
+            width = 2 if text[index + 1] == 'x' else 4
+            value.append(chr(int(text[index + 2:index + 2 + width], 16)))
+            index += 2 + width
+        elif text[index + 1] in '\r\n\u2028\u2029':
+            raise ValueError('line continuation in string literal')
+        else:
+            value.append(escapes.get(text[index + 1], text[index + 1]))
+            index += 2
+    if text[index:index + 2] != "';":
+        raise ValueError('string literal is not the whole statement')
+    if '</script' in text[start:index].lower():
+        raise ValueError('string literal would end the script element')
+    return ''.join(value)
+
+
 class TempCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.mkdtemp(prefix='xhibit-test-')
@@ -114,6 +150,20 @@ class TempCase(unittest.TestCase):
 
 
 class RequestTests(TempCase):
+    def test_each_repository_runs_its_own_identical_http_support(self):
+        with open(os.path.join(LP, 'python', 'http_support.py'), 'rb') as stream: ours = stream.read()
+        with open(os.path.join(CDU, 'python', 'http_support.py'), 'rb') as stream: theirs = stream.read()
+        self.assertEqual(ours, theirs, 'pd_localproxy and pd_cdu python/http_support.py must stay byte-identical')
+        self.assertEqual(os.path.realpath(http_support.__file__), os.path.realpath(os.path.join(LP, 'python', 'http_support.py')))
+        self.assertEqual(os.path.realpath(cdu_http_support.__file__), os.path.realpath(os.path.join(CDU, 'python', 'http_support.py')))
+        self.assertIsNot(http_support, cdu_http_support)
+        for module in (localproxy, manager):
+            self.assertIs(module.Response, http_support.Response)
+        self.assertIs(manager.fetch, http_support.fetch)
+        self.assertIs(cdu.Response, cdu_http_support.Response)
+        import software
+        self.assertIs(software.Response, http_support.Response)
+
     def test_php_duplicate_and_blank_parameters(self):
         self.assertEqual(http_support.parameters('id=1&id=2&empty='), {'id':'2','empty':''})
         for value, expected in [('garbage',0), ('12suffix',12), ('-2',-2), ('',0), ('  +7',7)]:
@@ -126,12 +176,12 @@ class RequestTests(TempCase):
         def python34_parse_qsl(encoded, *args, **kwargs):
             return [pair for part in encoded.split(';') for pair in real(part, *args, **kwargs)]
         with mock.patch('urllib.parse.parse_qsl', python34_parse_qsl):
-            self.assertEqual(lp_http_support.parameters('macAddr=' + MAC + ';x&a=1+2%3B&b&=v&c=1=2'),
-                             {'macAddr': MAC + ';x', 'a': '1 2;', 'b': '', '': 'v', 'c': '1=2'})
-            request = lp_http_support.Request(dict(SCRIPT_NAME='/proxy/xhibit_proxy.php',
-                                                   QUERY_STRING='macAddr=' + MAC + ';x', REQUEST_METHOD='GET'))
+            for helpers in (http_support, cdu_http_support):
+                self.assertEqual(helpers.parameters('macAddr=' + MAC + ';x&a=1+2%3B&b&=v&c=1=2'),
+                                 {'macAddr': MAC + ';x', 'a': '1 2;', 'b': '', '': 'v', 'c': '1=2'})
             render = mock.Mock()
-            response = localproxy.handle(request, {'opsIniPath': '/etc/xhibit/ops.ini'}, render)
+            response = localproxy.handle(self.request('xhibit_proxy.php', 'macAddr=' + MAC + ';x'),
+                                         {'opsIniPath': '/etc/xhibit/ops.ini'}, render)
         self.assertEqual((response.status, response.body), (200, b''))
         self.assertFalse(render.called)
 
@@ -378,6 +428,40 @@ class CDUTests(TempCase):
         self.assertEqual(response.status, 200)
         self.assertIn(b'badInformationContainer', response.body)
 
+    def test_notices_are_valid_script_strings_and_ordinary_notices_unchanged(self):
+        if not shutil.which('xsltproc'):
+            self.skipTest('xsltproc unavailable')
+        def render(notice, escaping=True):
+            data = xml_fixture().replace(b'A &amp; B', notice.encode('utf-8'))
+            if escaping:
+                return cdu.handle(self.request('xhibit_content.php'), self.settings(), lambda *a, **k: data)
+            with mock.patch.object(cdu, 'script_safe_notice', side_effect=lambda value: value):
+                return cdu.handle(self.request('xhibit_content.php'), self.settings(), lambda *a, **k: data)
+        # Intentional divergence from PHP: these notices broke (or altered) the stylesheets'
+        # JavaScript string. The literal must now evaluate to the NOTICE string value.
+        for notice, expected in [("Court 1's notice", "Court 1's notice"),
+                                 ('Line one\nLine two', 'Line one\nLine two'),
+                                 # XML parsing normalizes CRLF to LF before any stylesheet sees it.
+                                 ('Line one\r\nLine two', 'Line one\nLine two'),
+                                 ('C:\\path\\to\\file', 'C:\\path\\to\\file'),
+                                 ('<![CDATA[</script><script>alert(1)</script>]]>', '</script><script>alert(1)</script>'),
+                                 ('Paragraph\u2028separator\u2029here', 'Paragraph\u2028separator\u2029here'),
+                                 ("<![CDATA[It's \\ </SCRIPT>\n]]>", "It's \\ </SCRIPT>\n")]:
+            response = render(notice)
+            self.assertEqual(response.status, 200, notice)
+            self.assertEqual(notification_literal(response.body), expected, notice)
+            try:
+                legacy = notification_literal(render(notice, escaping=False).body)
+            except ValueError:
+                legacy = None
+            self.assertNotEqual(legacy, expected, notice)
+        # Ordinary notices keep byte-identical output (the PHP-equivalent path).
+        for notice, expected in [('Court 1 is closed today', 'Court 1 is closed today'), ('Welsh \u00f4', 'Welsh \u00f4'),
+                                 ('A &amp; B', 'A &amp; B'), ('Quote " and >', 'Quote " and >'), ('', '')]:
+            response = render(notice)
+            self.assertEqual(response.body, render(notice, escaping=False).body, notice)
+            self.assertEqual(notification_literal(response.body), expected, notice)
+
     def test_external_entities_rejected_before_transform(self):
         transform = mock.Mock()
         data = b'<?xml version="1.0"?><!DOCTYPE COURT [<!ENTITY a SYSTEM "file:///etc/passwd">]><COURT>&a;</COURT>'
@@ -426,18 +510,23 @@ class FakeDatabase(object):
     def update_cdu(self,*args): self.updated_cdu=args
 
 
+# Test-only value with the required length; real deployments generate their own.
+MANAGER = {'managerCsrfSecret': '0123456789abcdef' * 4}
+
+
 class ManagerTests(TempCase):
     def form(self, route, post, user='operator', settings=None, **headers):
-        post = dict(post, csrfToken=manager.csrf_token(settings or {}, user))
+        post = dict(post, csrfToken=manager.csrf_token(MANAGER if settings is None else settings, user))
         request = self.request(route, post=post, user=user)
         request.environ.update(headers)
         return request
 
     def test_views_existing_fields_and_links(self):
         db = FakeDatabase()
-        token = manager.csrf_token({}, 'operator').encode('ascii')
+        token = manager.csrf_token(MANAGER, 'operator').encode('ascii')
+        self.assertEqual(len(token), 64)
         for route in ['index.php','site.php','cdu.php']:
-            response = manager.handle(self.request(route,'id=1',user='operator'),{},db,lambda *a,**k:b'')
+            response = manager.handle(self.request(route,'id=1',user='operator'),MANAGER,db,lambda *a,**k:b'')
             self.assertEqual(response.status,200)
             self.assertIn(b'Test Court',response.body)
             self.assertNotIn(b'Database operation failed',response.body)
@@ -457,7 +546,9 @@ class ManagerTests(TempCase):
         db.cdu = lambda identifier: dict(ROW, id=identifier, description='</textarea>' + script, ipAddr='192.168.1.10',
                                          xsl='new', notification='</textarea>' + script, url='a b"<c>;d')
         selector = (b'<div class="display-location"><img src=x onerror=alert(2)></div>\n'
-                    b'<a onClick=\'selectDisplay("x\\"><script>alert(3)</script>")\'>Item</a>')
+                    b'<a onClick=\'selectDisplay("x\\"><script>alert(3)</script>")\'>Item</a>\n'
+                    b'<div class="display-location">&lt;script&gt;alert(4)&lt;/script&gt;</div>\n'
+                    b'<a onClick=\'selectDisplay("&quot;&gt;&lt;img src=x onerror=alert&#40;5&#41;&gt;")\'>Item</a>')
         settings = {'ShowProgress': 'true', 'url': 'http://internal/page.php?a=1&uri='}
         for route in ('index.php', 'site.php', 'cdu.php'):
             response = manager.handle(self.request(route, 'id=1' + http_support.urllib.parse.quote(script), user='<u>'),
@@ -469,6 +560,9 @@ class ManagerTests(TempCase):
         self.assertIn(b'>&lt;/textarea&gt;&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</textarea>', response.body)
         self.assertIn(b'href="http://internal/page.php?a=1&amp;uri=a%20b%22%3Cc%3E;d"', response.body)
         self.assertIn(b'helperTextCntl.textContent = helperDropDownCntl.value;', response.body)
+        # Entity-encoded selector text is decoded once and re-escaped, never emitted as markup.
+        self.assertIn(b'<option value="&quot;&gt;&lt;img src=x onerror=alert(5)&gt;" >&lt;script&gt;alert(4)&lt;/script&gt;</option>',
+                      response.body)
         index = manager.handle(self.request('index.php', user='operator'), {}, db)
         self.assertIn(b'<a href="cdu.php?id=1%22x">&lt;i&gt;Screen&lt;/i&gt;</a>', index.body)
 
@@ -480,11 +574,12 @@ class ManagerTests(TempCase):
             self.assertNotIn(b'alert(1)', response.body)
 
     def test_posts_require_user_token_and_same_origin(self):
-        settings = {'DBpasswd': 'private'}
+        settings = dict(MANAGER, DBpasswd='private')
         post = {'id': '1', 'UpdateNotice': 'Update Notice', 'notification': 'Forged'}
         forged = [self.request('cdu.php', post=post, user='operator'),
                   self.request('cdu.php', post=dict(post, csrfToken='0' * 64), user='operator'),
-                  self.request('cdu.php', post=dict(post, csrfToken=manager.csrf_token({}, 'operator')), user='operator'),
+                  self.request('cdu.php', post=dict(post, csrfToken=manager.csrf_token(
+                      {'managerCsrfSecret': 'f' * 64}, 'operator')), user='operator'),
                   self.request('cdu.php', post=dict(post, csrfToken=manager.csrf_token(settings, 'other')), user='operator'),
                   self.form('cdu.php', post, settings=settings, HTTP_HOST='manager.local', HTTP_ORIGIN='http://evil.example'),
                   self.form('cdu.php', post, settings=settings, HTTP_HOST='manager.local', HTTP_ORIGIN='null'),
@@ -505,9 +600,29 @@ class ManagerTests(TempCase):
             response = manager.handle(self.form('cdu.php', post, settings=settings, **headers), settings, db, lambda *a, **k: b'')
             self.assertEqual(response.status, 200)
             self.assertEqual(db.notices, [('1', 'Forged')])
-        self.assertNotEqual(manager.csrf_token({'DBpasswd': 'one'}, 'operator'), manager.csrf_token({'DBpasswd': 'two'}, 'operator'))
         self.assertNotEqual(manager.csrf_token(settings, 'operator'),
-                            manager.csrf_token(dict(settings, managerCsrfSecret='configured'), 'operator'))
+                            manager.csrf_token(dict(settings, managerCsrfSecret='f' * 64), 'operator'))
+
+    def test_posts_are_refused_without_a_long_random_csrf_secret(self):
+        post = {'id': '1', 'UpdateNotice': 'Update Notice', 'notification': 'Forged'}
+        # Database credentials, short values and the example placeholder never key tokens.
+        for settings in ({}, {'DBConn': 'mysql:host=localhost', 'DBName': 'localproxy', 'DBusername': 'localproxy',
+                              'DBpasswd': 'localproxy'}, {'managerCsrfSecret': 'changeme'},
+                         {'managerCsrfSecret': 'a' * 31}, {'managerCsrfSecret': 'REPLACE_WITH_RANDOM_SECRET' + 'x' * 32}):
+            self.assertIsNone(manager.csrf_secret(settings))
+            self.assertEqual(manager.csrf_token(settings, 'operator'), '')
+            db = FakeDatabase()
+            with mock.patch('manager.log') as log:
+                response = manager.handle(self.request('cdu.php', post=dict(post, csrfToken=''), user='operator'),
+                                          settings, db, lambda *a, **k: b'')
+            self.assertEqual(response.status, 403)
+            self.assertEqual((db.events, db.notices), ([], []))
+            log.assert_called_once_with('MANAGER_CSRF_SECRET_INVALID')
+            # Read-only pages still render; their forms carry no usable token.
+            response = manager.handle(self.request('cdu.php', 'id=1', user='operator'), settings, FakeDatabase(), lambda *a, **k: b'')
+            self.assertEqual(response.status, 200)
+            self.assertIn(b'name="csrfToken" value=""', response.body)
+        self.assertEqual(manager.csrf_secret({'managerCsrfSecret': 'b' * 32}), 'b' * 32)
 
     def test_no_user_does_not_open_database(self):
         with mock.patch('manager.Database.from_values') as factory:
@@ -518,12 +633,12 @@ class ManagerTests(TempCase):
 
     def test_posts_keep_200_without_redirect_and_audit_identity(self):
         db = FakeDatabase()
-        response = manager.handle(self.form('cdu.php',{'id':'1','UpdateNotice':'Update Notice','notification':'Notice'}),{},db,lambda *a,**k:b'')
+        response = manager.handle(self.form('cdu.php',{'id':'1','UpdateNotice':'Update Notice','notification':'Notice'}),MANAGER,db,lambda *a,**k:b'')
         self.assertEqual(response.status,200)
         self.assertFalse(any(key=='Location' for key,value in response.headers))
         self.assertEqual(db.notices,[('1','Notice')])
         self.assertEqual(db.events[-1],('operator','UPDATE_NOTIFICATION','(1) | Notice'))
-        manager.handle(self.form('cdu.php',{'id':'1','CancelNotice':'Cancel Notice'}),{},db,lambda *a,**k:b'')
+        manager.handle(self.form('cdu.php',{'id':'1','CancelNotice':'Cancel Notice'}),MANAGER,db,lambda *a,**k:b'')
         self.assertEqual(db.notices[-1],('1',None))
 
     def test_site_and_cdu_updates_preserve_form_and_audit_contract(self):
@@ -531,17 +646,39 @@ class ManagerTests(TempCase):
         post={'id':'1','UpdateSite':'Update','title':'Court','xsl':'','alert':'undefined',
               'selectorURL':'http://internal/selector','pageURL':'http://internal/page?','powersaveSchedule':'[]'}
         request=self.form('site.php',post)
-        response=manager.handle(request,{},db)
+        response=manager.handle(request,MANAGER,db)
         self.assertEqual(response.status,200)
         self.assertEqual(db.updated_site,('1',request.post))
         self.assertEqual(db.events[-1],('operator','UPDATE_SITE','Court |  |  | http://internal/selector | http://internal/page?'))
         post={'id':'1','UpdateCDU':'Update','macAddress':MAC,'title':'Screen','description':'Description',
               'location':'Reception','url':'one;two','xsl':'new','refresh':'15'}
         request=self.form('cdu.php',post)
-        response=manager.handle(request,{},db,lambda *a,**k:b'')
+        response=manager.handle(request,MANAGER,db,lambda *a,**k:b'')
         self.assertEqual(response.status,200)
         self.assertEqual(db.updated_cdu,('1',request.post))
         self.assertEqual(db.events[-1][1],'UPDATE_CDU')
+
+    def test_xhibit_page_link_only_for_http_urls_and_selector_entities_decoded_once(self):
+        selector = (b'<div class="display-location">St Alban&#039;s &amp; Hatfield</div>\n'
+                    b'<a onClick=\'selectDisplay("page.php?a=1&amp;b=2")\'>Item</a>')
+        for configured, url, linked in [('', 'javascript:alert(document.domain)', False),
+                                        ('', 'JaVaScRiPt:alert(1)', False), ('', ' javascript:alert(1)', False),
+                                        ('', 'data:text/html,<script>alert(1)</script>', False),
+                                        ('', 'one;two', False), ('', 'https://xhibit.example/page.php?uri=one', True),
+                                        ('http://internal/page.php?uri=', 'javascript:alert(1)', True)]:
+            db = FakeDatabase()
+            db.cdu = lambda identifier: dict(ROW, id=identifier, description='', ipAddr='192.168.1.10', xsl='new', url=url)
+            response = manager.handle(self.request('cdu.php', 'id=1', user='operator'), {'url': configured}, db,
+                                      lambda *a, **k: selector)
+            self.assertEqual(response.status, 200)
+            self.assertNotIn(b'href="javascript', response.body.lower())
+            self.assertNotIn(b'href="data', response.body.lower())
+            self.assertEqual(b'<a href="' + (configured or url).encode('ascii') in response.body, linked, (configured, url))
+            if not linked:
+                self.assertIn(b'<a target="_blank">', response.body)
+        self.assertIn(b'<option value="page.php?a=1&amp;b=2" >St Alban&#x27;s &amp; Hatfield</option>', response.body)
+        self.assertNotIn(b'&amp;amp;', response.body)
+        self.assertNotIn(b'&amp;#039;', response.body)
 
     def test_optional_progress_output_remains_available(self):
         response=manager.handle(self.request('index.php',user='operator'),{'ShowProgress':'true'},FakeDatabase())
@@ -562,6 +699,49 @@ class ManagerTests(TempCase):
             self.assertEqual(response.status,200)
             self.assertEqual(response.headers[0],('Content-Type','text/html; charset=UTF-8'))
             self.assertIn(b'Fetching from: http://192.168.1.10:8080/screenshot.php',response.body)
+
+    def test_screenshot_fetch_does_not_follow_redirects_or_proxy_variables(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        hits = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append((self.server.server_port, self.path))
+                if self.path == '/screenshot.php':
+                    self.send_response(302)
+                    self.send_header('Location', 'http://127.0.0.1:%d/internal-only' % internal.server_port)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                else:
+                    body = b'\x89PNG\r\n\x1a\nsecret'
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        servers = []
+        for unused in range(2):
+            server = HTTPServer(('127.0.0.1', 0), Handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            servers.append(server)
+        external, internal = servers
+        with mock.patch.dict(os.environ, {'http_proxy': 'http://127.0.0.1:%d' % internal.server_port,
+                                          'HTTP_PROXY': 'http://127.0.0.1:%d' % internal.server_port}):
+            with self.assertRaises(http_support.urllib.error.HTTPError):
+                manager.fetch_without_redirects('http://127.0.0.1:%d/screenshot.php' % external.server_port, timeout=5)
+            self.assertEqual(manager.fetch_without_redirects('http://127.0.0.1:%d/direct' % external.server_port,
+                                                             timeout=5, limit=100), b'\x89PNG\r\n\x1a\nsecret')
+            with self.assertRaises(ValueError):
+                manager.fetch_without_redirects('http://127.0.0.1:%d/direct' % external.server_port, timeout=5, limit=4)
+        self.assertEqual([port for port, path in hits], [external.server_port] * 3)
+        # Without an injected fetcher the screenshot route uses the no-redirect fetch.
+        with mock.patch('manager.fetch_without_redirects', side_effect=IOError('redirect refused')) as fetch:
+            response = manager.handle(self.request('cduScreenshot.php', 'ip=192.168.1.10'), {})
+        fetch.assert_called_once_with('http://192.168.1.10:8080/screenshot.php', timeout=10, limit=manager.SCREENSHOT_LIMIT)
+        self.assertIn(b'Fetching from: http://192.168.1.10:8080/screenshot.php', response.body)
 
     def test_screenshot_rejects_free_form_targets_and_escapes_failure(self):
         for value in ['169.254.169.254/latest/meta-data/#', '<img src=x onerror=alert(1)>', '10.0.0.1:22',

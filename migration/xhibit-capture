@@ -51,9 +51,10 @@ process = None
 try:
     # Capture and cleanup both run as the image owner. Apache cannot unlink an
     # xhibit-owned file in a sticky /tmp directory merely because it can read it.
+    # A new session lets a timeout stop screencapture.sh and every child it started.
     process = subprocess.Popen(['/home/xhibit/bin/screencapture.sh', '-f', sys.argv[1]],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+                               stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         process.wait(timeout=CAPTURE_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -61,6 +62,10 @@ try:
     stream_capture(target)
 finally:
     if process is not None and process.poll() is None:
-        process.kill()
+        # Still unreaped, so its process group id cannot have been reused.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            process.kill()
         process.wait()
     remove(target)

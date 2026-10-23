@@ -2,9 +2,11 @@
 """Port of the legacy manager controller/views; URLs and POST flow are retained.
 
 Security-only differences from the PHP manager: every substituted value is
-HTML-escaped, state-changing POSTs need a per-user CSRF token (and a same-origin
-Origin/Referer when the browser sends one), and cduScreenshot.php accepts only an
-IPv4 address or host name and relays only PNG bodies.
+HTML-escaped, the XHIBIT page link is rendered only for http/https URLs, POSTs need
+a per-user CSRF token keyed by a configured random managerCsrfSecret (and a
+same-origin Origin/Referer when the browser sends one), and cduScreenshot.php
+accepts only an IPv4 address or host name, does not follow redirects and relays
+only PNG bodies.
 """
 import hashlib
 import hmac
@@ -14,11 +16,13 @@ import os
 import re
 import string
 import urllib.parse
+import urllib.request
 from database import Database
 from http_support import Response, fetch, log
 
 TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 CSRF_FIELD = 'csrfToken'
+CSRF_SECRET_MINIMUM = 32  # bytes; generate with os.urandom, see config/ops.ini.example
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 SCREENSHOT_LIMIT = 16 * 1024 * 1024
 IPV4 = re.compile(r'^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}'
@@ -40,13 +44,40 @@ def url_text(value):
     return urllib.parse.quote(text(value), safe="!#$%&'()*+,/:;=?@[]~")
 
 
-def fragment(name, values=None):
+def fragment(name, values=None, markup=None):
+    """Substitute HTML-escaped values; markup holds attribute snippets built here from escape()."""
     with io.open(os.path.join(TEMPLATES, name + '.html'), encoding='utf-8') as stream:
         source = stream.read()
     # Patch-created template files have one terminating newline; PHP heredocs do not emit it.
     source = source[:-1] if source.endswith('\n') else source
-    return string.Template(source).substitute(dict((key, escape(value))
-                                                   for key, value in (values or {}).items()))
+    substitutions = dict((key, escape(value)) for key, value in (values or {}).items())
+    substitutions.update(markup or {})
+    return string.Template(source).substitute(substitutions)
+
+
+def link_attribute(url):
+    # Only http/https URLs become links; javascript:, data: and relative values do not.
+    try:
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+    except ValueError:
+        scheme = ''
+    return ' href="{0}"'.format(escape(url)) if scheme in ('http', 'https') else ''
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *unused):
+        return None  # The 3xx response becomes an HTTPError instead of a second request.
+
+
+def fetch_without_redirects(url, timeout=10, limit=0):
+    """Screenshot fetch: one request to the validated host, no redirects or proxy variables."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    opener.addheaders = []
+    with opener.open(urllib.request.Request(url), timeout=timeout) as response:
+        data = response.read(limit + 1) if limit else response.read()
+    if limit and len(data) > limit:
+        raise ValueError('upstream response limit')
+    return data
 
 
 def screenshot_host(value):
@@ -61,11 +92,19 @@ def screenshot_host(value):
     return value
 
 
+def csrf_secret(settings):
+    """The configured managerCsrfSecret, or None when it is missing or too short."""
+    secret = text(settings.get('managerCsrfSecret'))
+    if len(secret.encode('utf-8')) < CSRF_SECRET_MINIMUM or secret.startswith('REPLACE_WITH'):
+        return None
+    return secret
+
+
 def csrf_token(settings, user):
-    # Keyed by the private manager configuration: an explicit managerCsrfSecret,
-    # otherwise the database credentials Apache already reads from the root-owned INI.
-    secret = settings.get('managerCsrfSecret') or '\0'.join(
-        text(settings.get(key)) for key in ('DBConn', 'DBName', 'DBusername', 'DBpasswd'))
+    # No fallback to database credentials: they can be weak or published defaults.
+    secret = csrf_secret(settings)
+    if secret is None:
+        return ''
     key = hashlib.sha256(('xhibit-manager-csrf\0' + secret).encode('utf-8')).digest()
     return hmac.new(key, text(user).encode('utf-8'), hashlib.sha256).hexdigest()
 
@@ -88,7 +127,7 @@ def same_origin(environ):
 def csrf_valid(request, settings):
     supplied = request.post.get(CSRF_FIELD, '')
     expected = csrf_token(settings, request.user)
-    return (same_origin(request.environ) and
+    return (bool(expected) and same_origin(request.environ) and
             hmac.compare_digest(supplied.encode('utf-8'), expected.encode('ascii')))
 
 
@@ -171,20 +210,22 @@ def cdu_view(row, identifier, user, settings, pages, token=''):
     out += fragment('cdu-USER', values) + fragment('cdu-CDU')
     out += '\t\t<section id="info">\n\n\t\t\t<table class="output">\n\t\t\t</table>\n</section><br/>\n'
     if row:
-        values['xhibitUrl'] = settings.get('url', '') + url_text(row['url'])
+        xhibit_url = settings.get('url', '') + url_text(row['url'])
         values['proxyHttpUrl'] = settings.get('proxy', '') + '?macAddr=' + urllib.parse.quote_plus(row['macAddress'])
         values['cduHttpUrl'] = settings.get('cdu', '') + '?macAddr=' + urllib.parse.quote_plus(row['macAddress'])
-        out += fragment('cdu-CONTROL_REMOTE_CONTROL_PANEL', values)
+        out += fragment('cdu-CONTROL_REMOTE_CONTROL_PANEL', values, {'xhibitHref': link_attribute(xhibit_url)})
         out += fragment('cdu-NOTIFICATION', values) + fragment('cdu-CDU1', values)
         out += xsl_options(row.get('xsl'), True) + fragment('cdu-CDU2', values) + '\n'
         for label, url in pages:
             selected = ' selected="selected"' if url == row['url'] else ' '
-            out += '                    <option value="{0}"{1}>{2}</option>\n'.format(escape(url), selected, escape(label))
+            # Selector labels/values are cut from HTML source, so they are already entity-encoded.
+            out += '                    <option value="{0}"{1}>{2}</option>\n'.format(
+                escape(html.unescape(url)), selected, escape(html.unescape(label)))
         out += fragment('cdu-CDU3')
     return out + fragment('cdu-END')
 
 
-def handle(request, settings, database=None, fetcher=fetch):
+def handle(request, settings, database=None, fetcher=None):
     route = request.route or 'index.php'
     content_type = settings.get('defaultContentType', 'text/html; charset=UTF-8')
     if route == 'cduScreenshot.php':
@@ -193,7 +234,7 @@ def handle(request, settings, database=None, fetcher=fetch):
         try:
             if screenshot_host(host) is None:
                 raise ValueError('invalid screenshot host')
-            data = fetcher(target, timeout=10, limit=SCREENSHOT_LIMIT)
+            data = (fetcher or fetch_without_redirects)(target, timeout=10, limit=SCREENSHOT_LIMIT)
             if not data.startswith(PNG_SIGNATURE):
                 raise ValueError('screenshot response is not a PNG')
             return Response(data, content_type='image/png')
@@ -209,7 +250,7 @@ def handle(request, settings, database=None, fetcher=fetch):
                 if kind == 'site' else cdu_view(None, '', None, settings, []))
         return Response(fragment(kind + '-head') + view + '\n\t\n</body>\n</table>', content_type=content_type)
     if request.environ.get('REQUEST_METHOD') == 'POST' and not csrf_valid(request, settings):
-        log('MANAGER_CSRF_REJECTED')
+        log('MANAGER_CSRF_SECRET_INVALID' if csrf_secret(settings) is None else 'MANAGER_CSRF_REJECTED')
         return Response(fragment(kind + '-head') + '<p class="error">Error: Request could not be verified. '
                         'Reload the page and try again.</p>\n</body>\n</table>', status=403, content_type=content_type)
     token = csrf_token(settings, request.user)
@@ -269,7 +310,7 @@ def handle(request, settings, database=None, fetcher=fetch):
             selector = database.selector(identifier)
             if row and selector:
                 try:
-                    pages = available_pages(fetcher(selector, timeout=60))
+                    pages = available_pages((fetcher or fetch)(selector, timeout=60))
                 except Exception:
                     pass  # Legacy selector failures leave the helper dropdown empty.
             view = cdu_view(row, identifier, request.user, settings, pages, token)

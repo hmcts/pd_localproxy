@@ -182,10 +182,15 @@ def preflight(args):
     sys.path.insert(0,os.path.join(repo,'python'))
     from http_support import read_ini, command
     report = {'role':args.role,'python':sys.version.split()[0], 'executable':sys.executable,
-              'failures':[], 'checks':[]}
+              'failures':[], 'checks':[], 'warnings':[]}
     if sys.version_info < (3,4): report['failures'].append('Python 3.4 or later required')
     try:
-        values = read_ini(args.config)
+        if args.role == 'cdu':
+            # Read cdu.ini exactly as the CDU runtime does (parse_ini_file-style values).
+            from cdu import read_settings
+            values = read_settings(args.config)
+        else:
+            values = read_ini(args.config)
         mode = stat.S_IMODE(os.stat(args.config).st_mode)
         if mode & 0o007 or mode & 0o022:
             report['failures'].append('Config must not be world-readable or group/world-writable (use 0640)')
@@ -196,8 +201,11 @@ def preflight(args):
                 if '%%' in values.get(key, ''):
                     report['failures'].append('Config ' + key + ' contains "%%": legacy parser read it as "%"; '
                                               'values are now raw, so confirm and write the real value')
-            if args.with_manager and not values.get('managerCsrfSecret') and not values.get('DBpasswd'):
-                report['failures'].append('Manager CSRF key: set managerCsrfSecret when DBpasswd is empty')
+            if args.with_manager:
+                from manager import csrf_secret
+                if csrf_secret(values) is None:
+                    report['failures'].append('Manager requires managerCsrfSecret: a random value of at least '
+                                              '32 bytes (see config/ops.ini.example); POSTs are refused without it')
             for name in ['pymysql','bs4']:
                 module = __import__(name)
                 report['checks'].append(name + '=' + getattr(module,'__version__','installed'))
@@ -238,14 +246,32 @@ def preflight(args):
                 except (IOError,ET.ParseError): report['failures'].append('Invalid/missing stylesheet: new/'+name+'.xsl')
             for key in ['fetch', 'timeout', 'macAddressCmd']:
                 if not values.get(key): report['failures'].append('Missing Model Court config key: '+key)
+            # timeout is required above; the others default to 60 seconds in cdu.py.
+            for key in ['timeout','transformTimeout','macCommandTimeout','screenshotTimeout']:
+                if key in values:
+                    try: number = float(values[key])
+                    except ValueError: number = None
+                    if number is None or not 0 < number < float('inf'):
+                        report['failures'].append('Config ' + key + ' must be a positive number of seconds')
+            if 'defaultMacAddress' in values:
+                report['warnings'].append('defaultMacAddress is ignored: empty macAddressCmd output requests 00:00:00:00:00:00')
+            report['checks'].append('macAddressCmd is not run by preflight: confirm it prints this CDU\'s MAC as the Apache account')
             for key in ['lastUpdatedLocation','timestampMonitorFile']:
                 path = values[key]
                 writable = os.access(path,os.W_OK) if os.path.exists(path) else os.access(os.path.dirname(path),os.W_OK)
                 if not writable:
                     report['failures'].append('Apache account cannot update state file: ' + path)
-            script = values.get('screenshotScript','/home/xhibit/bin/screencapture.sh')
-            if not os.path.isfile(script): report['failures'].append('Missing screenshot script: ' + script)
-            report['checks'].append('Verify sudo rule and screenshot capture as Apache account during the pilot')
+            sudo = values.get('sudo','/usr/bin/sudo')
+            helper = values.get('captureHelper','/usr/local/libexec/xhibit-capture')
+            if not os.path.isfile(helper) or not os.access(helper,os.X_OK):
+                report['failures'].append('Missing or non-executable captureHelper: ' + helper)
+            # List (do not run) the exact screenshot command the CDU uses, as the invoking account.
+            try:
+                command([sudo,'-n','-l','-u','xhibit',helper,'0'*32+'-www-data'],timeout=15)
+                report['checks'].append('sudo -n rule for captureHelper as xhibit is available to this account')
+            except (OSError,RuntimeError,subprocess.TimeoutExpired):
+                report['failures'].append('sudo -n rule for captureHelper as xhibit is not available to this account')
+            report['checks'].append('Run CDU preflight as the Apache account; verify screenshot capture during the pilot')
     except Exception as exc:
         # Never print exception text: connection/configuration errors can contain credentials.
         report['failures'].append('Prerequisite check failed: ' + type(exc).__name__)

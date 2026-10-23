@@ -55,13 +55,17 @@ Manager is OPTIONAL, default off, and NOT production-verified. Only an explicit
 XHIBIT_WITH_MANAGER flag, and requires its extra schema/authentication checks.
 It retains current form field names, database updates, audit identity and 200
 responses without redirects. Security-only differences: all substituted output
-is HTML-escaped; every POST needs the per-user hidden csrfToken field (HMAC keyed
-by optional managerCsrfSecret, else the INI database credentials; preflight
-requires the secret if DBpasswd is empty) and, when the browser sends
-Origin/Referer, the same host, or it gets 403 before any database access;
-cduScreenshot.php accepts only an IPv4 address/host name and relays only PNG
-bodies. CDU.url updates remain distinct from urlMappings.url. Do not enable
-manager merely because old Apache aliases exist.
+is HTML-escaped and the XHIBIT page link is rendered only for http/https URLs;
+every POST needs the per-user hidden csrfToken field and, when the browser sends
+Origin/Referer, the same host, or it gets 403 before any database access. The
+token is an HMAC keyed ONLY by managerCsrfSecret, a random value of at least 32
+bytes in the external INI (never database credentials). Without it, POSTs are
+refused and --with-manager preflight fails. Generate one per host with
+`python3 -c "import binascii,os;print(binascii.hexlify(os.urandom(32)).decode())"`.
+cduScreenshot.php accepts only an IPv4 address/host name, makes one request
+without following redirects and relays only PNG bodies. CDU.url updates remain
+distinct from urlMappings.url. Do not enable manager merely because old Apache
+aliases exist.
 
 ## Build and configuration (offline)
 
@@ -118,6 +122,10 @@ with the confirmed target interpreter, validate the sudoers example using
 visudo -cf, and grant the narrow helper rule through the approved change.
 It invokes the existing screencapture.sh, streams PNG and cleans up as capture
 owner. Local screenshot fixtures do not certify real display hardware.
+Run CDU preflight as the Apache account: it reads cdu.ini as the CDU does,
+checks the four timeouts are positive numbers, captureHelper is executable and
+`sudo -n -l` permits it as xhibit (listing only, nothing is run), and warns that
+defaultMacAddress is ignored. It does not run macAddressCmd; confirm its output.
 Keep SELinux enforcing; validate narrowly required CGI/read/network/DB/state
 permissions with the actual Apache account and target policy.
 
@@ -188,7 +196,11 @@ intentional security differences, not a claim of identical handling of hostile
 inputs. The capture helper suppresses command stdout, uses unpredictable
 basenames, noninteractive sudo, bounded execution and capture-owner cleanup. It
 refuses a pre-existing name and streams only a single-link regular file it owns
-(no symlinks). Do not weaken these safeguards to emulate unsafe legacy execution.
+(no symlinks); on timeout it kills screencapture.sh's whole process group. A race
+between its existence check and screencapture.sh writing /tmp/NAME.png remains;
+only screencapture.sh writing to a private directory (a separately approved
+change outside this repository) closes it. Do not weaken these safeguards to
+emulate unsafe legacy execution.
 
 ## Pilot, rollback and PHP-removal gates
 

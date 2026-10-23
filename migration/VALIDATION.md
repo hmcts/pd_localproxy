@@ -123,15 +123,37 @@ Screenshots and detailed results are private external evidence:
 <evidence-dir>/browser-comparison-final/.
 They contain synthetic data only and are not production assets.
 
-### Review round 1 security changes
+### Review security changes (rounds 1 and 2)
 
-Manager output escaping, manager CSRF token/Origin checks, strict manager
-screenshot host/PNG checks, removal of CGI HTTP_PROXY before the in-process
-parser fetch, PHP-style "&"-only query splitting, one-pair INI quote stripping,
-additional Tomcat redaction and capture-helper link/ownership/timeout checks were
-added after the runs above. They were tested only on the development host
-(CPython 3.14, no MySQL/Apache/PHP opt-ins). Repeat the Python 3.4.3 container,
-HTTP-stack and PHP-reference runs before relying on the results above.
+Round 1: manager output escaping, manager CSRF token/Origin checks, strict
+manager screenshot host/PNG checks, removal of CGI HTTP_PROXY before the
+in-process parser fetch, PHP-style "&"-only query splitting, one-pair INI quote
+stripping, additional Tomcat redaction and capture-helper link/ownership/timeout
+checks. Round 2: a required random managerCsrfSecret (no database-credential
+fallback; POSTs refused and manager preflight failing without it), XHIBIT page
+links only for http/https, a no-redirect manager screenshot fetch, single
+decoding of selector-page entities, one redaction block shared by both evidence
+tools (covering *PASS names and define()), a process-group kill on capture
+timeout, CDU preflight reading cdu.ini through pd_cdu's read_settings with
+timeout/captureHelper/`sudo -n -l` checks, and notice script-string tests.
+
+All were added after the runs above and tested only on the development host
+(CPython 3.14, xsltproc, no MySQL/Apache/PHP/Playwright opt-ins). Repeat the
+Python 3.4.3 container, HTTP-stack and PHP-reference runs before relying on the
+results above.
+
+### Intentional CDU notice divergence from PHP
+
+pd_cdu escapes the /COURT/CDU/NOTICE value for the stylesheets' single-quoted
+`var NOTIFICATION = '...'` script string: backslash, apostrophe, LF, CR, U+2028,
+U+2029 and `<` (as `\x3c`). PHP inserted the text unescaped, so such notices
+broke the page script or, from CDATA, could close the script element. Output
+for notices without those characters is byte-identical to the PHP path; the
+PHP-reference and browser cases above contain none, so their parity results
+stand. test_compatibility checks, through cdu.handle and xsltproc, that the
+literal evaluates to the notice text (CRLF arrives as LF after XML parsing).
+The PHP-reference and browser harnesses assert equality with PHP and have no
+expected-divergence mode, so these cases are not added to them.
 
 ## Release checks
 
@@ -145,7 +167,10 @@ Application packages exclude physical PHP, NuSOAP, configuration credentials,
 SQL, tests, legacy references and nested archives. Public .php strings are URLs,
 not files or interpreter calls. Modes are normalized (0644, CGI 0755), ownership
 metadata is root/0. The release content is checked against manifests and the
-downloaded bytes against the configured artifact. Shared HTTP helpers match.
+downloaded bytes against the configured artifact. python/http_support.py is
+byte-identical in pd_localproxy and pd_cdu (pd_cdu ce406a1); a test enforces this,
+and the tests import each repository's own copy (earlier runs used pd_cdu's copy
+for both).
 No PHP runtime or new production third-party library is introduced.
 
 Security-only differences are explicitly retained: parameterized SQL, XML entity/
@@ -182,6 +207,8 @@ These are not claims of identical behaviour for hostile input.
    approval for host package/service removal and full Apache restart, followed
    by per-host runtime/module/process/listener/custom-installation verification.
    Repository commits cannot certify CVE removal on live hosts.
+7. pd_cdu's remaining human decisions are tracked in its pull request (branch
+   php-vuln-fix-cdu): CDU-2 holding page, CDU-3 clock guard and CDU-1 `<` mapping.
 
 No unexplained difference was found in the exercised supported synthetic cases.
 The gates above remain open; this is not an assertion of certainty across the

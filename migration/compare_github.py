@@ -68,23 +68,44 @@ def safe_relative(path):
             and not any(ord(char) < 32 for char in path))
 
 
+# BEGIN SHARED REDACTION: keep byte-identical in collect_production.py and
+# compare_github.py (a test enforces this). Each tool runs on the target as one
+# standalone file, so neither can import the other.
+REDACT_SECRET = (r'(?:[\w.-]*(?:pass|pwd|secret|token|credential|api[_-]?key)[\w.-]*'
+                 r'|DBusername|dbuser)')
+REDACTIONS = [
+    (r'-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY]', re.S),
+    (r'(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@', r'\1[REDACTED]@', 0),
+    (r'(?im)^(\s*' + REDACT_SECRET + r'\s*[=:]\s*).*$', r'\1[REDACTED]', 0),
+    (r'(?i)((?:[\w$]+[.\[\]"\x27]*)?' + REDACT_SECRET + r'[\]"\x27]*\s*(?:=>|=|:)\s*)(["\x27])[^\r\n]*?\2',
+     r'\1\2[REDACTED]\2', 0),
+    (r'(?i)(\b(?:[\w.-]*pass[\w.-]*|pwd|user(?:name)?)\s*=\s*)([^;\s&"\x27<>]+)', r'\1[REDACTED]', 0),
+    # Tomcat server.xml/context.xml: keystorePass, truststorePass, keyPass, username="...".
+    (r'(?i)(\b[\w.-]*(?:pass|user(?:name)?)\s*=\s*)(["\x27])[^\r\n]*?\2', r'\1\2[REDACTED]\2', 0),
+    (r'(?im)^([ \t]*(?:SetEnv|SetEnvIf)\s+' + REDACT_SECRET + r'\s+).*$', r'\1[REDACTED]', 0),
+    (r'(?im)^([ \t]*AuthLDAPBindPassword\s+).*$', r'\1[REDACTED]', 0),
+    (r'(?i)(Authorization[\s:"\x27=]+(?:Basic|Bearer)\s+)[^\s"\x27<>]+', r'\1[REDACTED]', 0),
+    (r'(?i)(<' + REDACT_SECRET + r'>)[^<]*(</[^>]+>)', r'\1[REDACTED]\2', 0),
+    (r'(?i)((?:--password(?:=|\s+)|(?<!\w)-p(?=\S)))[^\s;]+', r'\1[REDACTED]', 0),
+    (r'(?im)^(.*\b(?:Cookie|Set-Cookie)\s*:).*$', r'\1 [REDACTED]', 0),
+    # PHP constants, e.g. define('DB_PASS', '...').
+    (r'(?i)(define\s*\(\s*["\x27]' + REDACT_SECRET + r'["\x27]\s*,\s*)(["\x27])[^\r\n]*?\2',
+     r'\1\2[REDACTED]\2', 0)]
+
+
+def redact_with_count(text):
+    """Best-effort credential redaction returning (text, replacements); review output manually."""
+    count = 0
+    for pattern, replacement, flags in REDACTIONS:
+        text, changed = re.subn(pattern, replacement, text, flags=flags)
+        count += changed
+    return text, count
+# END SHARED REDACTION
+
+
 def redact(text):
     """Best-effort only. Diffs require manual review before sharing."""
-    secret = r'(?:[\w.-]*(?:passwd|password|pwd|secret|token|credential|api[_-]?key)[\w.-]*|DBusername|dbuser)'
-    rules = [
-        (r'-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[REDACTED PRIVATE KEY]', re.S),
-        (r'(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@', r'\1[REDACTED]@', 0),
-        (r'(?im)^(\s*' + secret + r'\s*[=:]\s*).*$', r'\1[REDACTED]', 0),
-        (r'(?i)((?:[\w$]+[.\[\]"\x27]*)?' + secret + r'[\]"\x27]*\s*(?:=>|=|:)\s*)(["\x27])[^\r\n]*?\2', r'\1\2[REDACTED]\2', 0),
-        (r'(?i)(define\s*\(\s*["\x27]' + secret + r'["\x27]\s*,\s*)(["\x27])[^\r\n]*?\2', r'\1\2[REDACTED]\2', 0),
-        (r'(?i)(\b(?:password|passwd|pwd|user(?:name)?)\s*=\s*)([^;\s&"\x27<>]+)', r'\1[REDACTED]', 0),
-        (r'(?im)^([ \t]*(?:SetEnv\s+' + secret + r'|AuthLDAPBindPassword)\s+).*$', r'\1[REDACTED]', 0),
-        (r'(?i)(Authorization[\s:"\x27=]+(?:Basic|Bearer)\s+)[^\s"\x27<>]+', r'\1[REDACTED]', 0),
-        (r'(?i)((?:--password(?:=|\s+)|(?<!\w)-p(?=\S)))[^\s;]+', r'\1[REDACTED]', 0),
-        (r'(?im)^(.*\b(?:Cookie|Set-Cookie)\s*:).*$', r'\1 [REDACTED]', 0)]
-    for pattern, replacement, flags in rules:
-        text = re.sub(pattern, replacement, text, flags=flags)
-    return text
+    return redact_with_count(text)[0]
 
 
 def fetch(url, limit):

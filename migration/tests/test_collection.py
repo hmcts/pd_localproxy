@@ -15,12 +15,19 @@ import unittest
 from unittest import mock
 
 MIGRATION = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPEC = importlib.util.spec_from_file_location('evidence_collector', os.path.join(MIGRATION, 'collect_production.py'))
-if hasattr(importlib.util, 'module_from_spec'):
-    collector = importlib.util.module_from_spec(SPEC)
-    SPEC.loader.exec_module(collector)
-else:
-    collector = SPEC.loader.load_module()  # Python 3.4 test harness, not application code.
+
+
+def load_tool(name, filename):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(MIGRATION, filename))
+    if hasattr(importlib.util, 'module_from_spec'):
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return spec.loader.load_module()  # Python 3.4 test harness, not application code.
+
+
+collector = load_tool('evidence_collector', 'collect_production.py')
+comparer = load_tool('github_comparer', 'compare_github.py')
 
 
 class CollectionTests(unittest.TestCase):
@@ -57,12 +64,34 @@ class CollectionTests(unittest.TestCase):
             '<Resource name="jdbc/x" username="canary-secret" password="other" />',
             '<Realm connectionUserName="canary-secret" />',
             'keystorePass=canary-secret',
+            '$dbPass = "canary-secret";',
+            "$this->db_pass = 'canary-secret';",
+            "define('DB_PASS', 'canary-secret');",
+            'define("DB_PASS", "canary-secret");',
+            'jdbc.pass: canary-secret',
+            '<keystorePass>canary-secret</keystorePass>',
+            'dsn = mysql:host=db;user=canary-secret;pass=canary-secret',
             '-----BEGIN RSA PRIVATE KEY-----\ncanary-secret\n-----END RSA PRIVATE KEY-----']
         for example in examples:
             with self.subTest(example=example):
                 result, count = collector.redact(example)
                 self.assertNotIn('canary-secret', result)
                 self.assertGreater(count, 0)
+                # compare_github.py redacts optional diffs and targeted evidence the same way.
+                self.assertEqual(comparer.redact(example), result)
+
+    def test_both_tools_share_one_redaction_block(self):
+        blocks = []
+        for name in ('collect_production.py', 'compare_github.py'):
+            with io.open(os.path.join(MIGRATION, name), encoding='utf-8') as stream:
+                source = stream.read()
+            begin = source.index('# BEGIN SHARED REDACTION')
+            blocks.append(source[begin:source.index('# END SHARED REDACTION', begin)])
+        self.assertEqual(blocks[0], blocks[1])
+        for text in ['Alias /manager /var/www/lan/manager', 'PassEnv PYTHONPATH', 'echo "new";',
+                     'fetch = http://192.168.1.254/proxy/xhibit_proxy.php']:
+            self.assertEqual(comparer.redact(text), text)
+            self.assertEqual(collector.redact(text), (text, 0))
 
     def test_nonsecret_config_preserved_byte_for_byte(self):
         source = b'Alias /manager /var/www/lan/manager\r\nListen 192.168.1.254:80\r\n'
