@@ -1,4 +1,3 @@
-create database localproxy;
-grant all on localproxy.* to 'localproxy'@'localhost' identified by 'localproxy';
-flush privileges;
-exit
+-- Deployment reuses the existing database and account; it never creates either.
+-- For isolated development databases, use xhibit_proxy_schema.sql with credentials
+-- supplied by the test operator. No shared or default password is shipped.

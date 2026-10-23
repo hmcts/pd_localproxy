@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+"""Root-owned sudo target, executed as xhibit; accepts only one generated basename."""
+import os
+import re
+import signal
+import subprocess
+import sys
+
+if len(sys.argv) != 2 or re.match(r'^[a-f0-9]{32}-www-data\Z', sys.argv[1]) is None:
+    sys.exit(2)
+
+def interrupted(signum, frame):
+    raise SystemExit(1)
+
+
+signal.signal(signal.SIGTERM, interrupted)
+target = '/tmp/' + sys.argv[1] + '.png'
+try:
+    # Capture and cleanup both run as the image owner. Apache cannot unlink an
+    # xhibit-owned file in a sticky /tmp directory merely because it can read it.
+    process = subprocess.Popen(['/home/xhibit/bin/screencapture.sh', '-f', sys.argv[1]],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process.communicate()
+    if os.path.isfile(target):
+        with open(target, 'rb') as stream:
+            sys.stdout.buffer.write(stream.read())
+finally:
+    if os.path.exists(target):
+        os.unlink(target)

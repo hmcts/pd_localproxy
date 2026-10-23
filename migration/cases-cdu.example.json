@@ -1,0 +1,26 @@
+[
+  {
+    "name": "shell",
+    "path": "index.php"
+  },
+  {
+    "name": "directory index",
+    "path": ""
+  },
+  {
+    "name": "content",
+    "path": "xhibit_content.php?macAddr=b8:27:eb:67:75:8f"
+  },
+  {
+    "name": "rotation",
+    "path": "xhibit_content.php?macAddr=b8:27:eb:67:75:8f&currentPageIndex=0"
+  },
+  {
+    "name": "empty MAC",
+    "path": "xhibit_content.php?macAddr="
+  },
+  {
+    "name": "screenshot fixed fixture",
+    "path": "screenshot.php"
+  }
+]

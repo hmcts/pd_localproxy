@@ -1,0 +1,36 @@
+[DATABASE]
+UseDB = true
+DBConn = "mysql:host=localhost;port=3306"
+DBName = localproxy
+DBType = mysql
+DBusername = REPLACE_WITH_EXISTING_ACCOUNT
+DBpasswd = REPLACE_WITH_EXISTING_SECRET
+MaxRecordCount = 10
+
+[VIEW]
+ShowProgress = false
+
+[XHIBIT]
+location = /var/www/lan/xhibit/
+url = http://192.168.1.254/page.php?login=true&ignoreBrowser=true&frameWidth=0&managerReloadMinutes=30&stylesheet=&uri=
+
+[PROXY]
+proxy = http://192.168.1.254/proxy/xhibit_proxy.php
+; Leave unset to retain the existing parser's blocking-read timeout behaviour.
+; A finite timeout is a separately approved operational change.
+
+[CDU]
+cdu = http://192.168.1.254/cdu/index.php
+
+[HTTP]
+; Match the existing php.ini default_mimetype/default_charset during pilot capture.
+defaultContentType = "text/html; charset=UTF-8"
+
+[ERROR]
+DisplayError = 0
+
+[SOFTWARE]
+; One explicitly configured Python-only uncompressed archive, not a request parameter.
+cduArchive = /var/www/court-display/software/cdu.tar
+; Match the target HTTP header, including php.ini default_charset if present.
+checksumContentType = text/plain
