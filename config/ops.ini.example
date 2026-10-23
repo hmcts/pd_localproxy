@@ -9,6 +9,9 @@ MaxRecordCount = 10
 
 [VIEW]
 ShowProgress = false
+; Optional manager only: secret for its per-user CSRF token. When unset, the
+; token is keyed by the database credentials above.
+; managerCsrfSecret = REPLACE_WITH_LONG_RANDOM_VALUE
 
 [XHIBIT]
 location = /var/www/lan/xhibit/

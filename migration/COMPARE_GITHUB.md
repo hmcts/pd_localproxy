@@ -49,12 +49,12 @@ those Git objects. The snapshot contains public code only, not production
 evidence. Using it avoids any GitHub access from JBOX:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit `
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user> `
   -BaselineFile .\public-baseline.json
 ```
 
-Transfer and extract the ZIP through your approved route. If that hostname is
-not resolvable/reachable from JBOX, substitute the proxy address you already use.
+Transfer and extract the ZIP through your approved route. Replace `<proxy-host>`
+and `<ssh-user>` with the approved proxy address and account you already use.
 Matching this snapshot does not mean it is an approved production release.
 
 Transfer the two tool files together using the approved JBOX transfer process,
@@ -71,14 +71,14 @@ Get-Command ssh, plink -CommandType Application -ErrorAction SilentlyContinue
 ```
 
 Use the existing SSH hostname/IP and account you normally use **from JBOX**.
-For example, if `NLEDISPL01.court.display.net` is reachable from JBOX:
+For example, if `<proxy-host>` is reachable from JBOX:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user>
 ```
 
-Use your own SSH account if it is not `xhibit`. Domain-style logins can be supplied
-as `-SshUser 'owain.greener@hmcts.net'` only if that is the approved proxy login;
+Use your own approved SSH account. Domain-style logins can be supplied
+as `-SshUser '<operator>@example'` only if that is the approved proxy login;
 your JBOX Windows account is not automatically your Linux account. Never put a
 password in arguments. The SSH client handles authentication and host-key prompts
 normally. Verify an unfamiliar host fingerprint through the approved process.
@@ -86,7 +86,7 @@ normally. Verify an unfamiliar host fingerprint through the approved process.
 If you normally use Plink, specify its existing executable, for example:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit `
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user> `
   -SshClient plink -SshExecutable 'C:\Program Files\PuTTY\plink.exe'
 ```
 
@@ -100,7 +100,7 @@ authentication/prompts fail when input is redirected; do not weaken access polic
 To request bounded changed-source snippets as well as hashes:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit -IncludeDiffs
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user> -IncludeDiffs
 ```
 
 Diffs are off by default. They are automatically redacted **before** selecting
@@ -131,7 +131,7 @@ Override a reviewed path using `-ParserFile`, `-ProxyRoot`, `-ManagerRoot`,
 `-CduRoot` or `-UpdateScriptsRoot`, for example:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit `
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user> `
   -UpdateScriptsRoot /actual/deployed/updater/directory
 ```
 
@@ -206,7 +206,7 @@ approved internet-connected Windows machine with the same tools:
 Transfer the generated `public-baseline.json` to JBOX through the approved route:
 
 ```powershell
-.\Compare-XhibitGitHub.ps1 -ProxyHost NLEDISPL01.court.display.net -SshUser xhibit `
+.\Compare-XhibitGitHub.ps1 -ProxyHost <proxy-host> -SshUser <ssh-user> `
   -BaselineFile .\public-baseline.json
 ```
 

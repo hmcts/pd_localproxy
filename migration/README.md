@@ -1,8 +1,9 @@
 # Model Court parity: Python-only applications and releases
 
 This release replaces application PHP with Python CGI while preserving Model
-Court's supported HTTP/XML/display contract. Model Court is 172.17.206.76;
-the verified distribution is not proof of every installed physical CDU version.
+Court's supported HTTP/XML/display contract (Model Court host: <model-court-ip>,
+recorded privately). The verified distribution is not proof of every installed
+physical CDU version.
 See MODEL_COURT_PROVENANCE.json and VALIDATION.md for evidence and open gates.
 
 No tool here deploys, changes a database schema, upgrades Python, removes PHP,
@@ -52,9 +53,15 @@ defaultContentType and display_errors settings before accepting header parity.
 Manager is OPTIONAL, default off, and NOT production-verified. Only an explicit
 --with-manager includes its code/static assets/routes, sets the server-side
 XHIBIT_WITH_MANAGER flag, and requires its extra schema/authentication checks.
-It retains current forms, database updates, audit identity and 200 responses
-without new CSRF fields or redirects. CDU.url updates remain distinct from
-urlMappings.url. Do not enable manager merely because old Apache aliases exist.
+It retains current form field names, database updates, audit identity and 200
+responses without redirects. Security-only differences: all substituted output
+is HTML-escaped; every POST needs the per-user hidden csrfToken field (HMAC keyed
+by optional managerCsrfSecret, else the INI database credentials; preflight
+requires the secret if DBpasswd is empty) and, when the browser sends
+Origin/Referer, the same host, or it gets 403 before any database access;
+cduScreenshot.php accepts only an IPv4 address/host name and relays only PNG
+bodies. CDU.url updates remain distinct from urlMappings.url. Do not enable
+manager merely because old Apache aliases exist.
 
 ## Build and configuration (offline)
 
@@ -174,12 +181,14 @@ arguments. Captures may be sensitive and must stay outside Git.
 ## Security-only differences
 
 Keep parameterized SQL, DTD/external-entity rejection, xsltproc network/write
-restrictions, no CGI HTTP_PROXY routing, secret-safe logging, source denial,
-bounded command execution and the safe screenshot helper. These are intentional
-security differences, not a claim of identical handling of hostile inputs.
-The capture helper suppresses command stdout, uses unpredictable basenames,
-noninteractive sudo, bounded execution and capture-owner cleanup. Do not weaken
-these safeguards to emulate unsafe legacy execution.
+restrictions, no CGI HTTP_PROXY routing (the proxy CGI drops HTTP_PROXY before
+the in-process parser fetch), secret-safe logging, source denial, bounded command
+execution, manager escaping/CSRF checks and the safe screenshot helper. These are
+intentional security differences, not a claim of identical handling of hostile
+inputs. The capture helper suppresses command stdout, uses unpredictable
+basenames, noninteractive sudo, bounded execution and capture-owner cleanup. It
+refuses a pre-existing name and streams only a single-link regular file it owns
+(no symlinks). Do not weaken these safeguards to emulate unsafe legacy execution.
 
 ## Pilot, rollback and PHP-removal gates
 

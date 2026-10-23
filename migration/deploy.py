@@ -190,6 +190,14 @@ def preflight(args):
         if mode & 0o007 or mode & 0o022:
             report['failures'].append('Config must not be world-readable or group/world-writable (use 0640)')
         if args.role == 'localproxy':
+            # The legacy parser read these through ConfigParser interpolation ("%%" meant "%").
+            # INI values are now read raw; never print the value itself.
+            for key in ['DBConn','DBName','DBusername','DBpasswd']:
+                if '%%' in values.get(key, ''):
+                    report['failures'].append('Config ' + key + ' contains "%%": legacy parser read it as "%"; '
+                                              'values are now raw, so confirm and write the real value')
+            if args.with_manager and not values.get('managerCsrfSecret') and not values.get('DBpasswd'):
+                report['failures'].append('Manager CSRF key: set managerCsrfSecret when DBpasswd is empty')
             for name in ['pymysql','bs4']:
                 module = __import__(name)
                 report['checks'].append(name + '=' + getattr(module,'__version__','installed'))

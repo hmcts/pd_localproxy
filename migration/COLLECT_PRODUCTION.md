@@ -13,20 +13,21 @@ application endpoints or restart services. Collection writes a new private
 directory and archive; ordinary filesystem access times may change.
 
 `collect_production.py` requires Python 3.4+ and uses only its standard library.
-The Python 3.4 interpreter already reported on NLEDISPL01 is sufficient; **do not
+The Python 3.4 interpreter already reported on the proxy is sufficient; **do not
 upgrade Python to collect this evidence**. The schema helper needs an existing
 mysql/mariadb command-line client and an approved database account.
 
 ## 1. First local proxy
 
 Run on the Mac. This creates a fresh private remote tools directory and copies
-the two scripts there. No sudo is used.
+the two scripts there. No sudo is used. Replace each `<...>` placeholder with
+the approved value; `<checkout>` is the folder holding your local checkout.
 
 ```bash
-xhibit_proxy='xhibit@NLEDISPL01.court.display.net'
+xhibit_proxy='<ssh-user>@<proxy-host>'
 xhibit_collect_dir=$(ssh "$xhibit_proxy" 'umask 077; mktemp -d /tmp/xhibit-collect.XXXXXX') &&
-scp /Users/owaingreener/Desktop/pdda_git/pd_localproxy/migration/collect_production.py \
-    /Users/owaingreener/Desktop/pdda_git/pd_localproxy/migration/collect_schema.sh \
+scp '<checkout>/pd_localproxy/migration/collect_production.py' \
+    '<checkout>/pd_localproxy/migration/collect_schema.sh' \
     "$xhibit_proxy:$xhibit_collect_dir/" &&
 ssh -t "$xhibit_proxy" "/usr/bin/python3 '$xhibit_collect_dir/collect_production.py' --role proxy"
 ```
@@ -37,7 +38,8 @@ Apache configuration, selected XHIBIT scheduler files, versions and file hashes.
 HTML/XML feeds, SQL files, images and archives are inventoried, not copied.
 Explicitly named Tomcat server/context XML configuration is an exception. Known
 password/key filenames are omitted entirely. Source/configuration credentials
-matching common patterns are replaced with `[REDACTED]`.
+matching common patterns (including Tomcat `*Pass` and `username` attributes)
+are replaced with `[REDACTED]`.
 
 Check `manifest.json` inside the printed directory. `incomplete` lists missing
 paths, permission errors and collection limits. Symlinks are recorded, not
@@ -88,7 +90,7 @@ From the Mac, replace `USER@CDU_HOST` with an approved reachable CDU:
 ```bash
 xhibit_cdu='USER@CDU_HOST'
 xhibit_cdu_collect_dir=$(ssh "$xhibit_cdu" 'umask 077; mktemp -d /tmp/xhibit-collect.XXXXXX') &&
-scp /Users/owaingreener/Desktop/pdda_git/pd_localproxy/migration/collect_production.py \
+scp '<checkout>/pd_localproxy/migration/collect_production.py' \
     "$xhibit_cdu:$xhibit_cdu_collect_dir/" &&
 ssh -t "$xhibit_cdu" "python3 '$xhibit_cdu_collect_dir/collect_production.py' --role cdu"
 ```

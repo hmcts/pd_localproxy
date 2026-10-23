@@ -21,6 +21,71 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 DEPLOY = os.path.join(ROOT,'pd_localproxy','migration','deploy.py')
+NEWER_NODES = ('JoinedStr', 'FormattedValue', 'TemplateStr', 'Interpolation', 'AnnAssign',
+               'AsyncFunctionDef', 'AsyncFor', 'AsyncWith', 'Await', 'MatMult', 'NamedExpr',
+               'Match', 'TryStar', 'TypeAlias')
+NEWER_APIS = set([('subprocess', 'run'), ('subprocess', 'CompletedProcess'), ('os', 'scandir'),
+                  ('os', 'fspath'), ('math', 'isclose'), ('math', 'inf'), ('math', 'nan'),
+                  ('math', 'gcd'), ('math', 'tau'), ('json', 'JSONDecodeError')])
+NEWER_MODULES = set(['secrets', 'typing', 'zipapp', 'contextvars', 'dataclasses', 'graphlib',
+                     'zoneinfo', 'tomllib'])
+
+
+def python34_problems(source, name='<source>'):
+    """Syntax/stdlib use newer than Python 3.4 that ast.parse(feature_version=...) accepts."""
+    import ast
+    import tokenize
+    tree = ast.parse(source, name)
+    problems = []
+    newer = tuple(getattr(ast, node) for node in NEWER_NODES if hasattr(ast, node))
+    parents = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    for node in ast.walk(tree):
+        where = '{0}:{1}'.format(name, getattr(node, 'lineno', getattr(parents.get(node), 'lineno', 0)))
+        if isinstance(node, newer):
+            problems.append(where + ' ' + type(node).__name__)
+        if isinstance(node, ast.Call):
+            # Python 3.4 allows one trailing *args and one final **kwargs (no PEP 448).
+            starred = [index for index, arg in enumerate(node.args) if isinstance(arg, ast.Starred)]
+            if len(starred) > 1 or (starred and starred[0] != len(node.args) - 1):
+                problems.append(where + ' PEP 448 positional unpacking')
+            double = [index for index, item in enumerate(node.keywords) if item.arg is None]
+            if len(double) > 1 or (double and double[0] != len(node.keywords) - 1):
+                problems.append(where + ' PEP 448 keyword unpacking')
+        if (isinstance(node, ast.Starred) and isinstance(node.ctx, ast.Load)
+                and not isinstance(parents.get(node), ast.Call)):
+            problems.append(where + ' starred expression outside an assignment target')
+        if isinstance(node, ast.Dict) and any(key is None for key in node.keys):
+            problems.append(where + ' dictionary unpacking')
+        if isinstance(node, ast.arguments) and getattr(node, 'posonlyargs', None):
+            problems.append(where + ' positional-only parameters')
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            if getattr(node, 'type_params', None):
+                problems.append(where + ' type parameters')
+            for decorator in node.decorator_list:
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                while isinstance(target, ast.Attribute):
+                    target = target.value
+                if not isinstance(target, ast.Name):
+                    problems.append(where + ' relaxed decorator expression')
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and (node.value.id, node.attr) in NEWER_APIS):
+            problems.append(where + ' {0}.{1}'.format(node.value.id, node.attr))
+        modules = []
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            modules = [node.module] + [node.module + '.' + alias.name for alias in node.names]
+        for module in modules:
+            if (module.split('.')[0] in NEWER_MODULES or module == '__future__.annotations'
+                    or tuple(module.split('.')[:2]) in NEWER_APIS):
+                problems.append(where + ' import ' + module)
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token[0] == tokenize.NUMBER and '_' in token[1]:
+            problems.append('{0}:{1} underscore in numeric literal'.format(name, token[2][0]))
+    return problems
 
 
 class PackageTests(unittest.TestCase):
@@ -44,17 +109,35 @@ class PackageTests(unittest.TestCase):
 
     def test_python34_syntax_for_all_runtime_code(self):
         import ast
+        paths=[os.path.join(ROOT,name) for name in ['pd_localproxy/cgi-bin/xhibit.cgi','pd_localproxy/migration/xhibit-capture',
+                                                    'pd_cdu/cgi-bin/xhibit.cgi']]
         for folder in ['pd_localproxy/python','pd_localproxy/proxy','pd_cdu/python','pd_localproxy/migration']:
             for parent,dirs,names in os.walk(os.path.join(ROOT,folder)):
-                dirs[:]=[name for name in dirs if name not in ['__pycache__','tests']]
-                for name in names:
-                    if name.endswith('.py'):
-                        with io.open(os.path.join(parent,name),encoding='utf-8') as stream: source=stream.read()
-                        # feature_version is available on the development interpreter, not needed on target 3.4.
-                        if sys.version_info >= (3,8):
-                            ast.parse(source,feature_version=(3,4))
-                        else:
-                            ast.parse(source)
+                dirs[:]=[name for name in dirs if name not in ['__pycache__']]
+                paths.extend(os.path.join(parent,name) for name in names if name.endswith('.py'))
+        self.assertTrue(len(paths) > 20)
+        problems=[]
+        for path in paths:
+            with io.open(path,encoding='utf-8') as stream: source=stream.read()
+            # feature_version is available on the development interpreter, not needed on target 3.4.
+            if sys.version_info >= (3,8):
+                ast.parse(source,feature_version=(3,4))
+            problems.extend(python34_problems(source,os.path.relpath(path,ROOT)))
+        self.assertEqual(problems,[])
+
+    def test_python34_checker_rejects_newer_syntax_and_apis(self):
+        for source in ['x = f"{y}"', 'x: int = 1', 'async def f():\n    await g()', 'a @ b', 'if (y := 1): pass',
+                       'f(*a, *b)', 'f(*a, b)', 'f(**a, b=1)', 'f(**a, **b)', '[*a, 1]', 'print(*a, *b)', '{**a}',
+                       'def f(a, /): pass', '@x[0]\ndef f(): pass', 'import subprocess\nsubprocess.run([])',
+                       'from os import scandir', 'import secrets', 'x = 1_000', 'match x:\n    case 1: pass']:
+            try:
+                compile(source, '<sample>', 'exec')
+            except SyntaxError:
+                continue  # Not even parseable by the development interpreter.
+            self.assertTrue(python34_problems(source), source)
+        for source in ['f(a, b=1, *c, **d)', 'f(b=1, *c)', 'a, *b = c\nfor x, *y in z: pass', '@a.b(c)\ndef f(): pass',
+                       'def f(a, *, b=1, **k): pass', 'def g(a: int) -> str: pass', 'yield_ = 1']:
+            self.assertEqual(python34_problems(source), [], source)
 
     def test_screenshot_helper_streams_and_cleans_as_capture_owner(self):
         import contextlib
@@ -67,19 +150,82 @@ class PackageTests(unittest.TestCase):
         self.addCleanup(lambda: os.unlink(target) if os.path.exists(target) else None)
         output=io.BytesIO()
         stdout=type('BinaryStdout',(object,),{'buffer':output})()
+        process=mock.Mock()
+        process.poll.return_value=0
         def capture(*args,**kwargs):
             with open(target,'wb') as stream: stream.write(b'PNG fixture')
-            process=mock.Mock()
-            process.communicate.return_value=(b'',b'')
             return process
-        with mock.patch('sys.argv',[helper,basename]), mock.patch('sys.stdout',stdout), mock.patch('signal.signal'), mock.patch('subprocess.Popen',side_effect=capture):
+        with mock.patch('sys.argv',[helper,basename]), mock.patch('sys.stdout',stdout), mock.patch('signal.signal'), mock.patch('subprocess.Popen',side_effect=capture) as popen:
             runpy.run_path(helper,run_name='__main__')
         self.assertEqual(output.getvalue(),b'PNG fixture')
         self.assertFalse(os.path.exists(target))
+        self.assertEqual(popen.call_args[1]['stdout'],subprocess.DEVNULL)
+        process.wait.assert_called_once_with(timeout=50)
+        self.assertFalse(process.kill.called)
         for invalid in ['../outside','name-with-spaces -f other','a'*32+'-www-data\n']:
             with mock.patch('sys.argv',[helper,invalid]), self.assertRaises(SystemExit) as exc:
                 runpy.run_path(helper,run_name='__main__')
             self.assertEqual(exc.exception.code,2)
+
+    def test_screenshot_helper_refuses_links_existing_names_and_hung_capture(self):
+        import runpy
+        import uuid
+        from unittest import mock
+        helper=os.path.join(ROOT,'pd_localproxy','migration','xhibit-capture')
+        secret=os.path.join(self.temp,'capture-owner-secret')
+        with open(secret,'wb') as stream: stream.write(b'not a screenshot')
+        def run(make=None, existing=None, hang=False):
+            basename=uuid.uuid4().hex+'-www-data'
+            target='/tmp/'+basename+'.png'
+            self.addCleanup(lambda: os.unlink(target) if os.path.lexists(target) else None)
+            if existing: existing(target)
+            output=io.BytesIO()
+            stdout=type('BinaryStdout',(object,),{'buffer':output})()
+            process=mock.Mock()
+            process.poll.return_value=None if hang else 0
+            if hang: process.wait.side_effect=[subprocess.TimeoutExpired('screencapture.sh',50),None]
+            def capture(*args,**kwargs):
+                if make: make(target)
+                return process
+            code=None
+            with mock.patch('sys.argv',[helper,basename]), mock.patch('sys.stdout',stdout), mock.patch('signal.signal'), \
+                    mock.patch('subprocess.Popen',side_effect=capture) as popen:
+                try: runpy.run_path(helper,run_name='__main__')
+                except SystemExit as exc: code=exc.code
+            return code, output.getvalue(), popen, process, target
+        # Written through a symlink or a hard link to another capture-owner file: never streamed.
+        for make in (lambda target: os.symlink(secret,target), lambda target: os.link(secret,target)):
+            code, output, popen, process, target = run(make)
+            self.assertEqual(output,b'')
+            self.assertFalse(os.path.lexists(target))
+            with open(secret,'rb') as stream: self.assertEqual(stream.read(),b'not a screenshot')
+        # A name that already exists was not created by this capture: refuse before capturing.
+        code, output, popen, process, target = run(existing=lambda target: os.symlink(secret,target))
+        self.assertEqual((code,output,popen.called),(1,b'',False))
+        self.assertTrue(os.path.islink(target))
+        # A capture that does not finish is killed and produces no output.
+        code, output, popen, process, target = run(make=lambda target: open(target,'wb').close(), hang=True)
+        self.assertEqual((code,output),(1,b''))
+        self.assertTrue(process.kill.called)
+        self.assertFalse(os.path.lexists(target))
+
+    def test_preflight_reports_legacy_percent_escapes_without_printing_values(self):
+        config=os.path.join(self.temp,'ops.ini')
+        with io.open(config,'w',encoding='utf-8') as stream:
+            stream.write('[DATABASE]\nDBConn = "mysql:host=localhost"\nDBName = localproxy\nDBusername = account\nDBpasswd = canary%%value\n')
+        os.chmod(config,0o600)
+        process=subprocess.Popen([sys.executable,DEPLOY,'preflight','localproxy','--config',config],stdout=subprocess.PIPE)
+        output=process.communicate()[0].decode('utf-8')
+        report=json.loads(output)
+        self.assertTrue(any('DBpasswd contains "%%"' in failure for failure in report['failures']))
+        self.assertFalse(any('DBName' in failure or 'DBusername' in failure for failure in report['failures']))
+        self.assertNotIn('canary',output)
+        self.assertFalse(any('managerCsrfSecret' in failure for failure in report['failures']))
+        with io.open(config,'w',encoding='utf-8') as stream:
+            stream.write('[DATABASE]\nDBConn = "mysql:host=localhost"\nDBName = localproxy\nDBusername = account\nDBpasswd =\n')
+        process=subprocess.Popen([sys.executable,DEPLOY,'preflight','localproxy','--config',config,'--with-manager'],stdout=subprocess.PIPE)
+        report=json.loads(process.communicate()[0].decode('utf-8'))
+        self.assertIn('Manager CSRF key: set managerCsrfSecret when DBpasswd is empty',report['failures'])
 
     def test_preflight_validates_verified_model_court_stylesheets(self):
         if not shutil.which('xsltproc'): self.skipTest('xsltproc unavailable')

@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Port of the legacy manager controller/views; URLs and POST flow are retained."""
+"""Port of the legacy manager controller/views; URLs and POST flow are retained.
+
+Security-only differences from the PHP manager: every substituted value is
+HTML-escaped, state-changing POSTs need a per-user CSRF token (and a same-origin
+Origin/Referer when the browser sends one), and cduScreenshot.php accepts only an
+IPv4 address or host name and relays only PNG bodies.
+"""
+import hashlib
+import hmac
+import html
 import io
 import os
 import re
@@ -9,10 +18,26 @@ from database import Database
 from http_support import Response, fetch, log
 
 TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+CSRF_FIELD = 'csrfToken'
+PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+SCREENSHOT_LIMIT = 16 * 1024 * 1024
+IPV4 = re.compile(r'^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}'
+                  r'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\Z')
+HOST_LABEL = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z')
 
 
 def text(value):
     return '' if value is None else str(value)
+
+
+def escape(value):
+    return html.escape(text(value), quote=True)
+
+
+def url_text(value):
+    # Percent-encode only characters that are never valid in a URL. Reserved
+    # characters and existing %-escapes are kept, so valid links are unchanged.
+    return urllib.parse.quote(text(value), safe="!#$%&'()*+,/:;=?@[]~")
 
 
 def fragment(name, values=None):
@@ -20,8 +45,51 @@ def fragment(name, values=None):
         source = stream.read()
     # Patch-created template files have one terminating newline; PHP heredocs do not emit it.
     source = source[:-1] if source.endswith('\n') else source
-    return string.Template(source).substitute(dict((key, text(value))
+    return string.Template(source).substitute(dict((key, escape(value))
                                                    for key, value in (values or {}).items()))
+
+
+def screenshot_host(value):
+    """Return value when it is a dotted IPv4 address or an RFC 1123 host name."""
+    if IPV4.match(value):
+        return value
+    labels = value.split('.')
+    # An all-numeric final label is not a host name; it may be an alternative IPv4 form.
+    if (len(value) > 253 or not all(HOST_LABEL.match(label) for label in labels)
+            or labels[-1].isdigit()):
+        return None
+    return value
+
+
+def csrf_token(settings, user):
+    # Keyed by the private manager configuration: an explicit managerCsrfSecret,
+    # otherwise the database credentials Apache already reads from the root-owned INI.
+    secret = settings.get('managerCsrfSecret') or '\0'.join(
+        text(settings.get(key)) for key in ('DBConn', 'DBName', 'DBusername', 'DBpasswd'))
+    key = hashlib.sha256(('xhibit-manager-csrf\0' + secret).encode('utf-8')).digest()
+    return hmac.new(key, text(user).encode('utf-8'), hashlib.sha256).hexdigest()
+
+
+def same_origin(environ):
+    host = environ.get('HTTP_HOST', '').strip().lower()
+    for header in ('HTTP_ORIGIN', 'HTTP_REFERER'):
+        value = environ.get(header)
+        if value is None:
+            continue
+        try:
+            source = urllib.parse.urlsplit(value.strip())
+        except ValueError:
+            return False
+        if not host or source.scheme not in ('http', 'https') or source.netloc.lower() != host:
+            return False
+    return True
+
+
+def csrf_valid(request, settings):
+    supplied = request.post.get(CSRF_FIELD, '')
+    expected = csrf_token(settings, request.user)
+    return (same_origin(request.environ) and
+            hmac.compare_digest(supplied.encode('utf-8'), expected.encode('ascii')))
 
 
 def xsl_options(value, allow_unset=False):
@@ -63,19 +131,21 @@ def index_view(rows, user):
             continue
         seen.add(site['SITEid'])
         out += '\t\t\t\t<tr>\n'
-        out += '\t\t\t\t\t<td class="results"><a href="site.php?id={0}">{1}</a></td>\n'.format(site['SITEid'], site['site'])
+        out += '\t\t\t\t\t<td class="results"><a href="site.php?id={0}">{1}</a></td>\n'.format(
+            escape(urllib.parse.quote(text(site['SITEid']), safe='')), escape(site['site']))
         out += '\t\t\t\t\t<td class="results">\n'
         for cdu in rows:
             if cdu['SITEid'] == site['SITEid']:
-                out += '\t\t\t\t\t\t<a href="cdu.php?id={0}">{1}</a><br/>\n'.format(cdu['CDUid'], cdu['title'])
+                out += '\t\t\t\t\t\t<a href="cdu.php?id={0}">{1}</a><br/>\n'.format(
+                    escape(urllib.parse.quote(text(cdu['CDUid']), safe='')), escape(cdu['title']))
         out += '\t\t\t\t\t</td>\n</tr>\n'
     out += '\t\t\t</table></center>\n\t\t</section>\n'
     return out + fragment('index-END')
 
 
-def site_view(row, identifier, user):
+def site_view(row, identifier, user, token=''):
     row = row or {}
-    values = dict(row, SITEindex=identifier, authenticatedUser=user,
+    values = dict(row, SITEindex=identifier, authenticatedUser=user, csrfToken=token,
                   alert='undefined' if row.get('alert') is None else row['alert'])
     values['selectorURL'] = row.get('selectorUrl', '')
     values['pageURL'] = row.get('pageUrl', '')
@@ -90,9 +160,9 @@ def site_view(row, identifier, user):
     return out + fragment('site-END')
 
 
-def cdu_view(row, identifier, user, settings, pages):
+def cdu_view(row, identifier, user, settings, pages, token=''):
     row = row or {}
-    values = dict(row, CDUindex=identifier, CDUsite=row.get('site', ''),
+    values = dict(row, CDUindex=identifier, CDUsite=row.get('site', ''), csrfToken=token,
                   authenticatedUser=user, CDUip=urllib.parse.quote_plus(text(row.get('ipAddr'))),
                   notice='undefined' if row.get('notification') is None else row['notification'])
     out = fragment('cdu-START', values)
@@ -101,7 +171,7 @@ def cdu_view(row, identifier, user, settings, pages):
     out += fragment('cdu-USER', values) + fragment('cdu-CDU')
     out += '\t\t<section id="info">\n\n\t\t\t<table class="output">\n\t\t\t</table>\n</section><br/>\n'
     if row:
-        values['xhibitUrl'] = settings.get('url', '') + row['url']
+        values['xhibitUrl'] = settings.get('url', '') + url_text(row['url'])
         values['proxyHttpUrl'] = settings.get('proxy', '') + '?macAddr=' + urllib.parse.quote_plus(row['macAddress'])
         values['cduHttpUrl'] = settings.get('cdu', '') + '?macAddr=' + urllib.parse.quote_plus(row['macAddress'])
         out += fragment('cdu-CONTROL_REMOTE_CONTROL_PANEL', values)
@@ -109,7 +179,7 @@ def cdu_view(row, identifier, user, settings, pages):
         out += xsl_options(row.get('xsl'), True) + fragment('cdu-CDU2', values) + '\n'
         for label, url in pages:
             selected = ' selected="selected"' if url == row['url'] else ' '
-            out += '                    <option value="{0}"{1}>{2}</option>\n'.format(url, selected, label)
+            out += '                    <option value="{0}"{1}>{2}</option>\n'.format(escape(url), selected, escape(label))
         out += fragment('cdu-CDU3')
     return out + fragment('cdu-END')
 
@@ -118,19 +188,31 @@ def handle(request, settings, database=None, fetcher=fetch):
     route = request.route or 'index.php'
     content_type = settings.get('defaultContentType', 'text/html; charset=UTF-8')
     if route == 'cduScreenshot.php':
-        target = 'http://{0}:8080/screenshot.php'.format(request.query.get('ip', ''))
+        host = request.query.get('ip', '')
+        target = 'http://{0}:8080/screenshot.php'.format(host)
         try:
-            return Response(fetcher(target, timeout=10), content_type='image/png')
+            if screenshot_host(host) is None:
+                raise ValueError('invalid screenshot host')
+            data = fetcher(target, timeout=10, limit=SCREENSHOT_LIMIT)
+            if not data.startswith(PNG_SIGNATURE):
+                raise ValueError('screenshot response is not a PNG')
+            return Response(data, content_type='image/png')
         except Exception:
-            return Response('<html>\n\t<body>\n\t\t<p>Fetching from: {0}</p>\n\t</body>\n</html>\n'.format(target), content_type=content_type)
+            return Response('<html>\n\t<body>\n\t\t<p>Fetching from: {0}</p>\n\t</body>\n</html>\n'.format(escape(target)), content_type=content_type)
     kind = {'index.php': 'index', 'site.php': 'site', 'cdu.php': 'cdu'}.get(route)
     if not kind:
         return Response(status=404)
     identifier = request.query.get('id', request.post.get('id', ''))
     if not request.user:
-        view = index_view([], None) if kind == 'index' else (site_view(None, identifier, None)
-                if kind == 'site' else cdu_view(None, identifier, None, settings, []))
+        # Like the PHP views, an unauthenticated page shows no requested index.
+        view = index_view([], None) if kind == 'index' else (site_view(None, '', None)
+                if kind == 'site' else cdu_view(None, '', None, settings, []))
         return Response(fragment(kind + '-head') + view + '\n\t\n</body>\n</table>', content_type=content_type)
+    if request.environ.get('REQUEST_METHOD') == 'POST' and not csrf_valid(request, settings):
+        log('MANAGER_CSRF_REJECTED')
+        return Response(fragment(kind + '-head') + '<p class="error">Error: Request could not be verified. '
+                        'Reload the page and try again.</p>\n</body>\n</table>', status=403, content_type=content_type)
+    token = csrf_token(settings, request.user)
     owned = database is None
     try:
         database = database or Database.from_values(settings)
@@ -156,7 +238,7 @@ def handle(request, settings, database=None, fetcher=fetch):
                 database.update_site(identifier, post)
                 progress.append('....success.')
             progress.append('... with index [{0}]'.format(identifier))
-            view = site_view(database.site(identifier), identifier, request.user)
+            view = site_view(database.site(identifier), identifier, request.user, token)
         else:
             progress.append('Fetching CDU')
             if 'id' not in request.query:
@@ -190,10 +272,10 @@ def handle(request, settings, database=None, fetcher=fetch):
                     pages = available_pages(fetcher(selector, timeout=60))
                 except Exception:
                     pass  # Legacy selector failures leave the helper dropdown empty.
-            view = cdu_view(row, identifier, request.user, settings, pages)
+            view = cdu_view(row, identifier, request.user, settings, pages, token)
         if settings.get('ShowProgress', 'false').lower() == 'true':
             progress.extend(getattr(database, 'progress', []))
-            rows = ''.join('\t\t\t<tr><td class="output">{0}</td></tr>\n'.format(line) for line in progress)
+            rows = ''.join('\t\t\t<tr><td class="output">{0}</td></tr>\n'.format(escape(line)) for line in progress)
             marker = '<table class="output">\n'
             view = view.replace(marker, marker + rows, 1)
         return Response(fragment(kind + '-head') + view + '\n\t\n</body>\n</table>', content_type=content_type)

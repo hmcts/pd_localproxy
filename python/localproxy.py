@@ -40,6 +40,10 @@ def handle(request, settings=None, renderer=None):
 
 
 def main():
+    # CGI turns a client "Proxy:" header into HTTP_PROXY. Python 3.4.3 urllib would
+    # then route the in-process parser's XHIBIT fetch through it (httpoxy,
+    # CVE-2016-1000110). The mod_php wrapper's exec'd parser did not see request headers.
+    os.environ.pop('HTTP_PROXY', None)
     try:
         path = os.environ.get('XHIBIT_CONFIG', '/etc/xhibit/ops.ini')
         values = read_ini(path)

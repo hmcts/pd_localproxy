@@ -2,6 +2,7 @@
 """Opt-in end-to-end Apache, MariaDB, HTML-feed and CDU transformation tests."""
 import json
 import os
+import re
 import sys
 import unittest
 import xml.etree.ElementTree as ET
@@ -38,6 +39,10 @@ class HTTPStackTests(unittest.TestCase):
 
     def request(self, role, path, data=None, authenticated=False):
         return self.stack.request(role, path, data, authenticated)
+
+    def token(self, path):
+        status, body, headers = self.request('proxy', path, authenticated=True)
+        return re.search(br'name="csrfToken" value="([0-9a-f]{64})"', body).group(1).decode('ascii')
 
     def proxy(self, extra=''):
         return self.request('proxy', '/proxy/xhibit_proxy.php?macAddr=' + self.stack.mac + extra)
@@ -95,6 +100,11 @@ class HTTPStackTests(unittest.TestCase):
         values = dict(id='1', UpdateCDU='Update', title='Updated Screen', description='Test description',
                       location='Reception', macAddress=self.stack.mac, refresh='15', xsl='new', url='manager-only-url')
         status, body, headers = self.request('proxy', '/manager/cdu.php', values, True)
+        self.assertEqual(status, 403)
+        self.stack.db.connection.commit()
+        self.assertEqual(self.stack.db.cdu(1)['title'], 'Local Test Screen')
+        values['csrfToken'] = self.token('/manager/cdu.php?id=1')
+        status, body, headers = self.request('proxy', '/manager/cdu.php', values, True)
         self.assertEqual(status, 200)
         self.assertIsNone(headers.get('Location'))
         self.stack.db.connection.commit()
@@ -103,7 +113,7 @@ class HTTPStackTests(unittest.TestCase):
         self.assertEqual(self.stack.db.parser_row(self.stack.mac)['url'], 'english-0;welsh-0')
         for action, expected in (('UpdateNotice', 'Local test notice'), ('CancelNotice', None)):
             status, body, headers = self.request('proxy', '/manager/cdu.php',
-                    dict(id='1', notification='Local test notice', **{action: '1'}), True)
+                    dict(id='1', notification='Local test notice', csrfToken=values['csrfToken'], **{action: '1'}), True)
             self.assertEqual(status, 200)
             self.stack.db.connection.commit()
             self.assertEqual(self.stack.db.cdu(1)['notification'], expected)
@@ -114,7 +124,8 @@ class HTTPStackTests(unittest.TestCase):
     def test_manager_site_post_persists_without_redirect(self):
         values = dict(id='1', UpdateSite='Update', title='Local Test Court', xsl='new', alert='Pilot alert',
                       selectorURL=self.stack.feed_url + '/selector.php',
-                      pageURL=self.stack.feed_url + '/page.php?', powersaveSchedule='[]')
+                      pageURL=self.stack.feed_url + '/page.php?', powersaveSchedule='[]',
+                      csrfToken=self.token('/manager/site.php?id=1'))
         status, body, headers = self.request('proxy', '/manager/site.php', values, True)
         self.assertEqual(status, 200)
         self.assertIsNone(headers.get('Location'))

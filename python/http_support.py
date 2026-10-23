@@ -36,8 +36,14 @@ def php_int(value):
 
 
 def parameters(encoded):
-    # PHP keeps the last scalar value for duplicate parameter names.
-    return dict(urllib.parse.parse_qsl(encoded, keep_blank_values=True))
+    # PHP keeps the last scalar value for duplicate parameter names. PHP separates
+    # fields only on "&"; Python 3.4 parse_qsl also splits on ";", so split here.
+    values = {}
+    for field in encoded.split("&"):
+        if field:
+            name, unused, value = field.partition("=")
+            values[urllib.parse.unquote_plus(name)] = urllib.parse.unquote_plus(value)
+    return values
 
 
 class Request(object):

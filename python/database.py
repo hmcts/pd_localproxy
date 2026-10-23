@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
 """MySQL/MariaDB access using the PyMySQL already deployed with XHIBIT."""
+def unquote(value):
+    # Strip one matching pair of surrounding quotes, as http_support.read_ini does.
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
 class Database(object):
     def __init__(self, connection, name, profile=None):
         self.connection = connection
@@ -18,7 +26,7 @@ class Database(object):
         import pymysql
         if values.get('DBType', 'mysql').lower() != 'mysql':
             raise ValueError('Only the deployed MySQL/MariaDB contract is supported')
-        dsn = values['DBConn'].strip('"\'')
+        dsn = unquote(values['DBConn'])
         if not dsn.startswith('mysql:'):
             raise ValueError('DBConn must be a mysql DSN')
         fields = dict(part.split('=', 1) for part in dsn[6:].split(';') if '=' in part)
@@ -33,7 +41,7 @@ class Database(object):
 
     @classmethod
     def from_parser_config(cls, config):
-        values = dict((key, config['DATABASE'].get(key, '').strip('"\''))
+        values = dict((key, unquote(config['DATABASE'].get(key, '')))
                       for key in ('DBConn', 'DBName', 'DBusername', 'DBpasswd', 'DBType'))
         values['DBType'] = values['DBType'] or 'mysql'
         return cls.from_values(values)

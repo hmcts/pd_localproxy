@@ -6,9 +6,10 @@ production deployment or host-level vulnerability-removal sign-off.
 ## Protected baseline
 
 Both dirty feature worktrees were archived, including their Git state and
-untracked migration work, BEFORE edits. Private checkpoint outside Git:
+untracked migration work, BEFORE edits. Private checkpoint outside Git
+(location recorded privately, not in this public repository):
 
-- /Users/owaingreener/Desktop/xhibit-parity-checkpoint.FEQLla/
+- <evidence-dir>/
 - pd_localproxy-worktree.tar.gz SHA-256 5e2eae463c486ecc6e86048eee0ef4c6e8f871617c85fac329b4fe47a3dd61db
 - pd_cdu-worktree.tar.gz SHA-256 e06e243ecef4dbcddd7fc3be146b6fcf5b5886ade0a0845cd055902759630d08
 
@@ -119,8 +120,18 @@ records this known error and fails for any other unexpected browser exception.
 Obtain an explicit decision before fixing the source asset as a separate change.
 
 Screenshots and detailed results are private external evidence:
-xhibit-parity-checkpoint.FEQLla/browser-comparison-final/.
+<evidence-dir>/browser-comparison-final/.
 They contain synthetic data only and are not production assets.
+
+### Review round 1 security changes
+
+Manager output escaping, manager CSRF token/Origin checks, strict manager
+screenshot host/PNG checks, removal of CGI HTTP_PROXY before the in-process
+parser fetch, PHP-style "&"-only query splitting, one-pair INI quote stripping,
+additional Tomcat redaction and capture-helper link/ownership/timeout checks were
+added after the runs above. They were tested only on the development host
+(CPython 3.14, no MySQL/Apache/PHP opt-ins). Repeat the Python 3.4.3 container,
+HTTP-stack and PHP-reference runs before relying on the results above.
 
 ## Release checks
 
@@ -155,6 +166,10 @@ These are not claims of identical behaviour for hostile input.
    A distribution archive is not fleet-wide installation evidence.
 3. Review the shared No Info browser defect above. Date-specific schedules also
    retain the verified legacy todayDate NameError; day-based schedules are tested.
+   Effect: when a "date" power-save entry matches today (e.g. a bank holiday),
+   formatCDU fails (CDU_XML), the proxy returns an empty 200 body and the CDU
+   shows the bad-information holding page instead of power saving. Fixing the
+   typo (todayDate -> todaysDate) changes proxy output and needs separate approval.
    No unsupported claim of error-free baseline behaviour is made.
 4. Identify callers of the old CGI-directory parser, all root/system updater
    jobs and actual updater installation/extraction/obsolete-file cleanup.

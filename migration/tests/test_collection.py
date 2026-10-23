@@ -52,6 +52,11 @@ class CollectionTests(unittest.TestCase):
             'AuthLDAPBindPassword canary-secret',
             'mysql --password=canary-secret',
             'Cookie: session=canary-secret',
+            '<Connector port="8443" keystorePass="canary-secret" />',
+            "<Connector truststorePass='canary-secret' keyPass=\"canary-secret\" />",
+            '<Resource name="jdbc/x" username="canary-secret" password="other" />',
+            '<Realm connectionUserName="canary-secret" />',
+            'keystorePass=canary-secret',
             '-----BEGIN RSA PRIVATE KEY-----\ncanary-secret\n-----END RSA PRIVATE KEY-----']
         for example in examples:
             with self.subTest(example=example):

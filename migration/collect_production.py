@@ -66,6 +66,9 @@ def redact(text):
         (r'(?i)((?:[\w$]+[.\[\]"\x27]*)?' + SECRET + r'[\]"\x27]*\s*(?:=>|=|:)\s*)(["\x27])[^\r\n]*?\2',
          r'\1\2[REDACTED]\2', 0),
         (r'(?i)(\b(?:password|passwd|pwd|user(?:name)?)\s*=\s*)([^;\s&"\x27<>]+)', r'\1[REDACTED]', 0),
+        # Tomcat server.xml/context.xml: keystorePass, truststorePass, keyPass, username="...".
+        (r'(?i)(\b[\w.-]*(?:pass|user(?:name)?)\s*=\s*)(["\x27])[^\r\n]*?\2', r'\1\2[REDACTED]\2', 0),
+        (r'(?im)^(\s*[\w.-]*pass\s*[=:]\s*).*$' , r'\1[REDACTED]', 0),
         (r'(?im)^([ \t]*(?:SetEnv|SetEnvIf)\s+' + SECRET + r'\s+).*$' , r'\1[REDACTED]', 0),
         (r'(?im)^([ \t]*AuthLDAPBindPassword\s+).*$' , r'\1[REDACTED]', 0),
         (r'(?i)(Authorization[\s:"\x27=]+(?:Basic|Bearer)\s+)[^\s"\x27<>]+', r'\1[REDACTED]', 0),

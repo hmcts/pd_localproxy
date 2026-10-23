@@ -4,6 +4,7 @@ import ast
 import configparser
 import contextlib
 import datetime
+import importlib.util
 import io
 import json
 import os
@@ -27,6 +28,19 @@ import cdu
 from database import Database
 
 MAC = 'b8:27:eb:67:75:8f'
+
+
+def load_source(name, path):
+    # pd_cdu/python is first on sys.path, so "http_support" above is the CDU copy.
+    spec = importlib.util.spec_from_file_location(name, path)
+    if hasattr(importlib.util, 'module_from_spec'):
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    return spec.loader.load_module()  # Python 3.4 test harness, not application code.
+
+
+lp_http_support = load_source('lp_http_support', os.path.join(LP, 'python', 'http_support.py'))
 ROW = dict(title='Court 1', location='Reception', notification='Notice', macAddress=MAC,
            url='one;two', refresh=15, site='Test Court', pageUrl='http://internal/page.php?',
            powersaveSchedule='[]', welshTitle='Llys Prawf')
@@ -105,11 +119,37 @@ class RequestTests(TempCase):
         for value, expected in [('garbage',0), ('12suffix',12), ('-2',-2), ('',0), ('  +7',7)]:
             self.assertEqual(http_support.php_int(value), expected)
 
+    def test_semicolon_is_not_a_query_separator(self):
+        # Python 3.4 parse_qsl split on ";" as well as "&"; PHP does not. Simulate the
+        # target behaviour so the result does not depend on the development interpreter.
+        real = http_support.urllib.parse.parse_qsl
+        def python34_parse_qsl(encoded, *args, **kwargs):
+            return [pair for part in encoded.split(';') for pair in real(part, *args, **kwargs)]
+        with mock.patch('urllib.parse.parse_qsl', python34_parse_qsl):
+            self.assertEqual(lp_http_support.parameters('macAddr=' + MAC + ';x&a=1+2%3B&b&=v&c=1=2'),
+                             {'macAddr': MAC + ';x', 'a': '1 2;', 'b': '', '': 'v', 'c': '1=2'})
+            request = lp_http_support.Request(dict(SCRIPT_NAME='/proxy/xhibit_proxy.php',
+                                                   QUERY_STRING='macAddr=' + MAC + ';x', REQUEST_METHOD='GET'))
+            render = mock.Mock()
+            response = localproxy.handle(request, {'opsIniPath': '/etc/xhibit/ops.ini'}, render)
+        self.assertEqual((response.status, response.body), (200, b''))
+        self.assertFalse(render.called)
+
     def test_config_raw_percent_and_quoted_values(self):
         path = os.path.join(self.temp, 'config.ini')
         with io.open(path, 'w', encoding='utf-8') as stream:
             stream.write('[DATABASE]\nDBpasswd = "a%password"\n[HOST]\ntimeout = 3\n')
         self.assertEqual(http_support.read_ini(path)['DBpasswd'], 'a%password')
+
+    def test_parser_database_values_strip_only_one_matching_quote_pair(self):
+        config = configparser.RawConfigParser()
+        config.read_string('[DATABASE]\nDBConn = "mysql:host=localhost"\nDBName = "\'db\'"\n'
+                           "DBusername = 'user'\nDBpasswd = secret'\n")
+        with mock.patch.object(Database, 'from_values') as factory:
+            Database.from_parser_config(config)
+        values = factory.call_args[0][0]
+        self.assertEqual((values['DBConn'], values['DBName'], values['DBusername'], values['DBpasswd']),
+                         ('mysql:host=localhost', "'db'", 'user', "secret'"))
 
     def test_response_bytes_and_204(self):
         stream = io.BytesIO()
@@ -152,22 +192,54 @@ class ProxyTests(TempCase):
         localproxy.handle(self.request('xhibit_refresh.php', 'macAddr=' + MAC + '&currentPageIndex=1'), settings, render)
         self.assertFalse(render.called)
 
+    def test_cgi_proxy_header_is_not_used_by_parser_fetch(self):
+        def python343_proxies():
+            # CPython 3.4.3 getproxies_environment(), without the later httpoxy check.
+            proxies = {}
+            for name, value in os.environ.items():
+                name = name.lower()
+                if value and name[-6:] == '_proxy':
+                    proxies[name[:-6]] = value
+            return proxies
+        seen = []
+        def render(*args, **kwargs):
+            seen.append((os.environ.get('HTTP_PROXY'), python343_proxies().get('http')))
+            return '<?xml version="1.0" encoding="UTF-8"?>\n<COURT/>\n'
+        config = os.path.join(self.temp, 'ops.ini')
+        with io.open(config, 'w', encoding='utf-8') as stream:
+            stream.write('[DATABASE]\nDBName = localproxy\n')
+        environ = dict(REQUEST_METHOD='GET', SCRIPT_NAME='/proxy/xhibit_proxy.php',
+                       QUERY_STRING='macAddr=' + MAC, HTTP_PROXY='http://attacker.invalid:8080',
+                       XHIBIT_CONFIG=config, CONTENT_LENGTH='0')
+        output = io.BytesIO()
+        stdout = type('BinaryStdout', (object,), {'buffer': output})()
+        stdin = type('BinaryStdin', (object,), {'buffer': io.BytesIO()})()
+        fake = types.ModuleType('xhibit')
+        fake.render = render
+        # clear=True: a developer's own *_proxy variables must not affect the assertion.
+        with mock.patch.dict(os.environ, environ, clear=True), mock.patch.dict(sys.modules, {'xhibit': fake}), \
+                mock.patch('sys.stdout', stdout), mock.patch('sys.stdin', stdin):
+            localproxy.main()
+        self.assertEqual(seen, [(None, None)])
+        self.assertTrue(output.getvalue().startswith(b'Content-Type: application/xml\r\n\r\n<?xml'))
+
 
 class ParserCharacterization(TempCase):
     @classmethod
     def setUpClass(cls):
         try:
             import bs4
-            import pymysql
         except ImportError:
-            raise unittest.SkipTest('Install existing parser dependencies in the development environment')
+            raise unittest.SkipTest('Install the existing parser dependency bs4 in the development environment')
         import xhibit
         cls.parser = xhibit
         path = os.path.join(os.path.dirname(__file__), 'fixtures', 'xhibit-before.py.txt')
         with io.open(path, encoding='utf-8') as stream:
             baseline = stream.read().split('macAddress = sys.argv[1]')[0]
         cls.legacy = types.ModuleType('legacy_parser')
-        with mock.patch('logging.basicConfig'):
+        # The baseline imports pymysql at module level; these tests never connect to a database.
+        modules = {} if 'pymysql' in sys.modules else {'pymysql': types.ModuleType('pymysql')}
+        with mock.patch('logging.basicConfig'), mock.patch.dict(sys.modules, modules):
             exec(compile(baseline, path, 'exec'), cls.legacy.__dict__)
         cls.legacy.displayError = False
 
@@ -355,17 +427,87 @@ class FakeDatabase(object):
 
 
 class ManagerTests(TempCase):
+    def form(self, route, post, user='operator', settings=None, **headers):
+        post = dict(post, csrfToken=manager.csrf_token(settings or {}, user))
+        request = self.request(route, post=post, user=user)
+        request.environ.update(headers)
+        return request
+
     def test_views_existing_fields_and_links(self):
         db = FakeDatabase()
+        token = manager.csrf_token({}, 'operator').encode('ascii')
         for route in ['index.php','site.php','cdu.php']:
             response = manager.handle(self.request(route,'id=1',user='operator'),{},db,lambda *a,**k:b'')
             self.assertEqual(response.status,200)
             self.assertIn(b'Test Court',response.body)
             self.assertNotIn(b'Database operation failed',response.body)
-            self.assertNotIn(b'csrf',response.body)
+            if route != 'index.php':
+                self.assertIn(b'<input type="hidden" name="csrfToken" value="' + token + b'"/>', response.body)
         response = manager.handle(self.request('cdu.php','id=1',user='operator'),{},db,lambda *a,**k:b'')
         for field in ['macAddress','refresh','url','notification','UpdateCDU','UpdateNotice','CancelNotice']:
             self.assertIn(field.encode('ascii'),response.body)
+        self.assertEqual(response.body.count(b'name="csrfToken"'), 2)
+
+    def test_manager_html_escapes_request_database_selector_and_progress_values(self):
+        script = '"><script>alert(1)</script>'
+        db = FakeDatabase()
+        db.index = lambda: [dict(SITEid=1, CDUid='1"x', site='<b>Court</b>', title='<i>Screen</i>')]
+        db.site = lambda identifier: dict(id=identifier, title=script, xsl='new', alert='</textarea>' + script,
+                                          selectorUrl='"' + script, pageUrl="'><svg onload=x>", powersaveSchedule='[]')
+        db.cdu = lambda identifier: dict(ROW, id=identifier, description='</textarea>' + script, ipAddr='192.168.1.10',
+                                         xsl='new', notification='</textarea>' + script, url='a b"<c>;d')
+        selector = (b'<div class="display-location"><img src=x onerror=alert(2)></div>\n'
+                    b'<a onClick=\'selectDisplay("x\\"><script>alert(3)</script>")\'>Item</a>')
+        settings = {'ShowProgress': 'true', 'url': 'http://internal/page.php?a=1&uri='}
+        for route in ('index.php', 'site.php', 'cdu.php'):
+            response = manager.handle(self.request(route, 'id=1' + http_support.urllib.parse.quote(script), user='<u>'),
+                                      settings, db, lambda *a, **k: selector)
+            self.assertEqual(response.status, 200, route)
+            for raw in (b'<script>alert', b'<img src=x', b'<svg onload', b'<b>Court', b'<i>Screen', b'<u>'):
+                self.assertNotIn(raw, response.body, (route, raw))
+        self.assertIn(b'value="1&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"', response.body)
+        self.assertIn(b'>&lt;/textarea&gt;&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;</textarea>', response.body)
+        self.assertIn(b'href="http://internal/page.php?a=1&amp;uri=a%20b%22%3Cc%3E;d"', response.body)
+        self.assertIn(b'helperTextCntl.textContent = helperDropDownCntl.value;', response.body)
+        index = manager.handle(self.request('index.php', user='operator'), {}, db)
+        self.assertIn(b'<a href="cdu.php?id=1%22x">&lt;i&gt;Screen&lt;/i&gt;</a>', index.body)
+
+    def test_no_user_page_does_not_reflect_requested_index(self):
+        for route, title in (('cdu.php', b'CDU (:)'), ('site.php', b'SITE (:)')):
+            response = manager.handle(self.request(route, 'id=%3Cscript%3Ealert(1)%3C/script%3E'), {})
+            self.assertEqual(response.status, 200)
+            self.assertIn(title, response.body)
+            self.assertNotIn(b'alert(1)', response.body)
+
+    def test_posts_require_user_token_and_same_origin(self):
+        settings = {'DBpasswd': 'private'}
+        post = {'id': '1', 'UpdateNotice': 'Update Notice', 'notification': 'Forged'}
+        forged = [self.request('cdu.php', post=post, user='operator'),
+                  self.request('cdu.php', post=dict(post, csrfToken='0' * 64), user='operator'),
+                  self.request('cdu.php', post=dict(post, csrfToken=manager.csrf_token({}, 'operator')), user='operator'),
+                  self.request('cdu.php', post=dict(post, csrfToken=manager.csrf_token(settings, 'other')), user='operator'),
+                  self.form('cdu.php', post, settings=settings, HTTP_HOST='manager.local', HTTP_ORIGIN='http://evil.example'),
+                  self.form('cdu.php', post, settings=settings, HTTP_HOST='manager.local', HTTP_ORIGIN='null'),
+                  self.form('cdu.php', post, settings=settings, HTTP_HOST='manager.local',
+                            HTTP_REFERER='http://evil.example/manager/cdu.php'),
+                  self.form('site.php', {'id': '1', 'UpdateSite': 'Update', 'title': 'Forged'}, settings=settings,
+                            HTTP_HOST='manager.local', HTTP_ORIGIN='http://manager.local.evil.example')]
+        for request in forged:
+            db = FakeDatabase()
+            response = manager.handle(request, settings, db, lambda *a, **k: b'')
+            self.assertEqual(response.status, 403)
+            self.assertIn(b'Request could not be verified', response.body)
+            self.assertEqual((db.events, db.notices), ([], []))
+            self.assertFalse(hasattr(db, 'updated_site'))
+        for headers in ({}, {'HTTP_HOST': 'manager.local', 'HTTP_ORIGIN': 'http://manager.local'},
+                        {'HTTP_HOST': 'manager.local', 'HTTP_REFERER': 'https://manager.local/manager/cdu.php?id=1'}):
+            db = FakeDatabase()
+            response = manager.handle(self.form('cdu.php', post, settings=settings, **headers), settings, db, lambda *a, **k: b'')
+            self.assertEqual(response.status, 200)
+            self.assertEqual(db.notices, [('1', 'Forged')])
+        self.assertNotEqual(manager.csrf_token({'DBpasswd': 'one'}, 'operator'), manager.csrf_token({'DBpasswd': 'two'}, 'operator'))
+        self.assertNotEqual(manager.csrf_token(settings, 'operator'),
+                            manager.csrf_token(dict(settings, managerCsrfSecret='configured'), 'operator'))
 
     def test_no_user_does_not_open_database(self):
         with mock.patch('manager.Database.from_values') as factory:
@@ -376,27 +518,29 @@ class ManagerTests(TempCase):
 
     def test_posts_keep_200_without_redirect_and_audit_identity(self):
         db = FakeDatabase()
-        response = manager.handle(self.request('cdu.php',post={'id':'1','UpdateNotice':'Update Notice','notification':'Notice'},user='operator'),{},db,lambda *a,**k:b'')
+        response = manager.handle(self.form('cdu.php',{'id':'1','UpdateNotice':'Update Notice','notification':'Notice'}),{},db,lambda *a,**k:b'')
         self.assertEqual(response.status,200)
         self.assertFalse(any(key=='Location' for key,value in response.headers))
         self.assertEqual(db.notices,[('1','Notice')])
         self.assertEqual(db.events[-1],('operator','UPDATE_NOTIFICATION','(1) | Notice'))
-        manager.handle(self.request('cdu.php',post={'id':'1','CancelNotice':'Cancel Notice'},user='operator'),{},db,lambda *a,**k:b'')
+        manager.handle(self.form('cdu.php',{'id':'1','CancelNotice':'Cancel Notice'}),{},db,lambda *a,**k:b'')
         self.assertEqual(db.notices[-1],('1',None))
 
     def test_site_and_cdu_updates_preserve_form_and_audit_contract(self):
         db=FakeDatabase()
         post={'id':'1','UpdateSite':'Update','title':'Court','xsl':'','alert':'undefined',
               'selectorURL':'http://internal/selector','pageURL':'http://internal/page?','powersaveSchedule':'[]'}
-        response=manager.handle(self.request('site.php',post=post,user='operator'),{},db)
+        request=self.form('site.php',post)
+        response=manager.handle(request,{},db)
         self.assertEqual(response.status,200)
-        self.assertEqual(db.updated_site,('1',post))
+        self.assertEqual(db.updated_site,('1',request.post))
         self.assertEqual(db.events[-1],('operator','UPDATE_SITE','Court |  |  | http://internal/selector | http://internal/page?'))
         post={'id':'1','UpdateCDU':'Update','macAddress':MAC,'title':'Screen','description':'Description',
               'location':'Reception','url':'one;two','xsl':'new','refresh':'15'}
-        response=manager.handle(self.request('cdu.php',post=post,user='operator'),{},db,lambda *a,**k:b'')
+        request=self.form('cdu.php',post)
+        response=manager.handle(request,{},db,lambda *a,**k:b'')
         self.assertEqual(response.status,200)
-        self.assertEqual(db.updated_cdu,('1',post))
+        self.assertEqual(db.updated_cdu,('1',request.post))
         self.assertEqual(db.events[-1][1],'UPDATE_CDU')
 
     def test_optional_progress_output_remains_available(self):
@@ -404,14 +548,34 @@ class ManagerTests(TempCase):
         self.assertIn(b'Fetching list of CDUs',response.body)
 
     def test_screenshot_uses_existing_port_and_failure_response(self):
-        fetcher=mock.Mock(return_value=b'PNG')
+        png=b'\x89PNG\r\n\x1a\nimage'
+        fetcher=mock.Mock(return_value=png)
         response=manager.handle(self.request('cduScreenshot.php','ip=192.168.1.10'),{},fetcher=fetcher)
-        self.assertEqual(response.body,b'PNG')
-        fetcher.assert_called_once_with('http://192.168.1.10:8080/screenshot.php',timeout=10)
-        fetcher.side_effect=IOError('offline')
-        response=manager.handle(self.request('cduScreenshot.php','ip=192.168.1.10'),{},fetcher=fetcher)
-        self.assertEqual(response.status,200)
-        self.assertIn(b'Fetching from:',response.body)
+        self.assertEqual(response.body,png)
+        self.assertEqual(response.headers[0],('Content-Type','image/png'))
+        fetcher.assert_called_once_with('http://192.168.1.10:8080/screenshot.php',timeout=10,limit=manager.SCREENSHOT_LIMIT)
+        manager.handle(self.request('cduScreenshot.php','ip=cdu-01.court.example'),{},fetcher=fetcher)
+        fetcher.assert_called_with('http://cdu-01.court.example:8080/screenshot.php',timeout=10,limit=manager.SCREENSHOT_LIMIT)
+        for side_effect in (IOError('offline'), None):
+            fetcher=mock.Mock(side_effect=side_effect, return_value=b'<html>not an image</html>')
+            response=manager.handle(self.request('cduScreenshot.php','ip=192.168.1.10'),{},fetcher=fetcher)
+            self.assertEqual(response.status,200)
+            self.assertEqual(response.headers[0],('Content-Type','text/html; charset=UTF-8'))
+            self.assertIn(b'Fetching from: http://192.168.1.10:8080/screenshot.php',response.body)
+
+    def test_screenshot_rejects_free_form_targets_and_escapes_failure(self):
+        for value in ['169.254.169.254/latest/meta-data/#', '<img src=x onerror=alert(1)>', '10.0.0.1:22',
+                      '10.0.0.1\r\nX-Injected: 1', '10.0.0.1 ', '256.1.1.1', '127.1', '0x7f.0.0.1', 'user@host',
+                      'host..example', '-host.example', '', 'a' * 64 + '.example']:
+            fetcher = mock.Mock(return_value=b'\x89PNG\r\n\x1a\n')
+            query = 'ip=' + http_support.urllib.parse.quote(value, safe='')
+            response = manager.handle(self.request('cduScreenshot.php', query), {}, fetcher=fetcher)
+            self.assertFalse(fetcher.called, value)
+            self.assertEqual(response.status, 200)
+            self.assertIn(b'Fetching from:', response.body)
+            self.assertNotIn(b'<img', response.body)
+        response = manager.handle(self.request('cduScreenshot.php', 'ip=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E'), {})
+        self.assertIn(b'Fetching from: http://&lt;img src=x onerror=alert(1)&gt;:8080/screenshot.php', response.body)
 
 
 class DatabaseTests(unittest.TestCase):
