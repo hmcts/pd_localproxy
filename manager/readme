@@ -1,9 +1,8 @@
-This is the XHIBIT Manager in PHP.
+Optional XHIBIT Manager - not production-verified
 
-It is used to maintain the localproxy database with aspects of CDU and site
-configuration including:
-1. Mapping CDU to source URL
-2. CDU Title, description and location.
-3. CDU notification (ticker message).
-4. Site name.
-5. Site Alert message.
+The current Python implementation is retained without changing forms, POST/200
+responses, audit identity or database-update semantics. It is disabled and absent
+from default release packages. Enable only through an approved --with-manager
+package/configuration/preflight, preserving existing Apache authentication and
+access restrictions. CDU.url updates do not update urlMappings.url.
+See ../migration/README.md. Absence from Model Court is not evidence of parity.

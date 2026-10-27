@@ -1,0 +1,30 @@
+[
+  {
+    "name": "proxy missing MAC",
+    "path": "proxy/xhibit_proxy.php"
+  },
+  {
+    "name": "proxy invalid MAC",
+    "path": "proxy/xhibit_proxy.php?macAddr=invalid"
+  },
+  {
+    "name": "proxy first page",
+    "path": "proxy/xhibit_proxy.php?macAddr=b8:27:eb:67:75:8f"
+  },
+  {
+    "name": "proxy rotation",
+    "path": "proxy/xhibit_proxy.php?macAddr=b8:27:eb:67:75:8f&currentPageIndex=0"
+  },
+  {
+    "name": "ignored data_refresh",
+    "path": "proxy/xhibit_proxy.php?macAddr=b8:27:eb:67:75:8f&currentPageIndex=0&data_refresh=1"
+  },
+  {
+    "name": "fixed artifact checksum",
+    "path": "software/checksum.php"
+  },
+  {
+    "name": "fixed artifact download",
+    "path": "software/download.php"
+  }
+]

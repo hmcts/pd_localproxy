@@ -1,0 +1,4 @@
+# This is a hash-verified historical Python oracle, never a runtime import.
+/migration/tests/fixtures/xhibit-before.py.txt -text -whitespace
+# Ported heredoc whitespace is part of the retained manager response contract.
+/python/templates/** -text -whitespace
