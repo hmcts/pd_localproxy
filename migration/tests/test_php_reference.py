@@ -158,7 +158,15 @@ class PHPReferenceTests(TempCase):
         before = self.php('index.php')
         self.assertFalse(os.path.exists(os.path.join(self.temp, 'monitor')))
         after = cdu.handle(self.request('index.php'), self.settings())
-        self.assertEqual((after.status, after.body), (before[0], before[2]))
+        with io.open(os.path.join(CDU, 'MODEL_COURT_PROVENANCE.json'), encoding='utf-8') as stream:
+            provenance = json.load(stream)
+        approved = provenance.get('approved_local_changes', {}).get('cdu/index.php')
+        if approved:
+            # PHP serves the verified shell; Python serves the approved fix of it.
+            self.assertEqual(hashlib.sha256(before[2]).hexdigest(), provenance['files']['cdu/index.php'])
+            self.assertEqual((after.status, hashlib.sha256(after.body).hexdigest()), (before[0], approved['sha256']))
+        else:
+            self.assertEqual((after.status, after.body), (before[0], before[2]))
         cases = []
         for page in cdu.FULL:
             for language in ('English', 'Welsh'):
@@ -168,7 +176,10 @@ class PHPReferenceTests(TempCase):
                                   python=base64.b64encode(python).decode('ascii')))
         import re
         rows = re.search(b'<COURTCASE>.*?</COURTCASE>', xml_fixture(), re.S).group(0)
+        no_notices = xml_fixture('Court Detail').replace(b'<NOTICES><NOTICE>Notice</NOTICE></NOTICES>', b'<NOTICES></NOTICES>')
         additional = [('English scrolling', xml_fixture().replace(rows, rows * 80)),
+                      ('English Court Detail no notices', no_notices),
+                      ('Welsh Court Detail no notices', no_notices.replace(b'English', b'Welsh')),
                       ('English power saving', xml_fixture().replace(b'DISABLED', b'ENABLED')),
                       ('Welsh power saving', xml_fixture().replace(b'DISABLED', b'ENABLED').replace(b'English', b'Welsh')),
                       ('Unicode notices', xml_fixture().replace(b'A &amp; B', b'Welsh \xc3\xb4 & raw &amp; entity')),

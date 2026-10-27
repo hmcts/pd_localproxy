@@ -118,6 +118,8 @@ shared browser defect is NOT described as fully working/error-free No Info.
 Verified assets are not silently modified. The harness explicitly checks and
 records this known error and fails for any other unexpected browser exception.
 Obtain an explicit decision before fixing the source asset as a separate change.
+The shell's approved script-error retry (below) re-raises this error and leaves
+the stylesheet's own retry to run alone.
 
 Screenshots and detailed results are private external evidence:
 <evidence-dir>/browser-comparison-final/.
@@ -154,6 +156,36 @@ stand. test_compatibility checks, through cdu.handle and xsltproc, that the
 literal evaluates to the notice text (CRLF arrives as LF after XML parsing).
 The PHP-reference and browser harnesses assert equality with PHP and have no
 expected-divergence mode, so these cases are not added to them.
+
+### Approved changes to verified assets (27 October 2026)
+
+Two verified Model Court assets carry approved fixes. MODEL_COURT_PROVENANCE.json
+keeps their Model Court hashes under "files" and records the shipped hash, date
+and reason under "approved_local_changes". test_model_court accepts only those
+hashes; every other verified asset must stay byte-identical.
+
+- display_documentNEW.js: a page whose result table has no body rows (Court
+  Detail with no notices, or any list with no cases) threw in alignHeaders()
+  before the rotation timer was set. The CDU's clock kept running but it never
+  requested another page, so it showed stale hearings. This was observed on two
+  courtroom CDUs and reproduced locally. An empty table now aligns to its own
+  header row and counts as one page ("1 of 1", single-page interval). Legacy
+  master's JavaScript has the same defect; its pages masked it with a 2-hour
+  full-page refresh.
+- python/templates/index.html (cdu/index.php): if initialise() throws, the shell
+  re-raises the error to the console and requests the next page after
+  (2 x refresh + 10) seconds, unless a page has been requested since. The No
+  Info page's own retry (2 x refresh) therefore runs alone, one request per
+  cycle. AJAX HTTP failures still stop after three attempts (CDU-2).
+
+Both were checked in Chrome through cdu.handle and xsltproc with synthetic
+fixtures at refresh 3: rotation continued past Welsh Court Detail with no notices
+and a changed notice reached the screen; with the old JavaScript the shell
+recovered 16 seconds after each error; a No Info-only rotation kept one request
+per cycle. test_php_reference now expects the approved shell (and the verified
+hash from PHP) and adds English/Welsh "Court Detail no notices" browser cases,
+which browser_compare.js requires to be one page and to keep requesting. Those
+opt-in runs have not been repeated.
 
 ## Release checks
 
@@ -208,7 +240,8 @@ These are not claims of identical behaviour for hostile input.
    by per-host runtime/module/process/listener/custom-installation verification.
    Repository commits cannot certify CVE removal on live hosts.
 7. pd_cdu's remaining human decisions are tracked in its pull request (branch
-   php-vuln-fix-cdu): CDU-2 holding page, CDU-3 clock guard and CDU-1 `<` mapping.
+   php-vuln-fix-cdu): CDU-2 holding page and AJAX-failure reload (the script-error
+   retry is approved, see above), CDU-3 clock guard and CDU-1 `<` mapping.
 
 No unexplained difference was found in the exercised supported synthetic cases.
 The gates above remain open; this is not an assertion of certainty across the

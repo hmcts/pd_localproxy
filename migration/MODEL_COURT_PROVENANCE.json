@@ -1,4 +1,16 @@
 {
+  "approved_local_changes": {
+    "cdu/display_documentNEW.js": {
+      "approved": "2026-10-27",
+      "reason": "An empty result table (e.g. Court Detail with no notices) threw in alignHeaders() and stopped the display requesting new content. It is now treated as one page.",
+      "sha256": "f9b50ca457cf36b81fde8b409ba992d994f1ce75f26e1fb24f41c3a9785ca89b"
+    },
+    "cdu/index.php": {
+      "approved": "2026-10-27",
+      "reason": "python/templates/index.html: if initialise() throws, the shell reports the error and requests the next page instead of freezing on stale content.",
+      "sha256": "ce40b2598f314a4f2d5ea757cc8d1f174cec93373ecc5473ff7d963bf8ab0bd9"
+    }
+  },
   "cdu_archive_sha256": "1920448a5c1e528dcec20b84a01d46049c5f5259f096c23ede732450506c7978",
   "files": {
     "software/checksum.php": "a5633f0d84dd4b0fb48a10964bfbd56511353623139dc5214ed973b057ff231e",

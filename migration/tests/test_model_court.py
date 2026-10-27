@@ -15,10 +15,21 @@ class ModelCourtTests(TempCase):
     def test_verified_assets_are_byte_identical_and_old_profile_is_absent(self):
         with io.open(os.path.join(CDU, 'MODEL_COURT_PROVENANCE.json'), encoding='utf-8') as stream:
             provenance = json.load(stream)
+        with io.open(os.path.join(LP, 'migration', 'MODEL_COURT_PROVENANCE.json'), encoding='utf-8') as stream:
+            self.assertEqual(json.load(stream), provenance)
+        # Approved fixes keep the Model Court hash in "files" and record the shipped
+        # hash, date and reason; every other verified asset stays byte-identical.
+        approved = provenance.get('approved_local_changes', {})
+        for source, change in approved.items():
+            self.assertIn(source, provenance['files'])
+            self.assertNotEqual(change['sha256'], provenance['files'][source], source)
+            self.assertTrue(change['approved'] and change['reason'], source)
         for source, expected in provenance['files'].items():
             if not source.startswith('cdu/') or source in ('cdu/screenshot.php', 'cdu/xhibit_content.php'):
                 continue
             target = source[4:] if source != 'cdu/index.php' else 'python/templates/index.html'
+            if source in approved:
+                expected = approved[source]['sha256']
             with open(os.path.join(CDU, target), 'rb') as stream:
                 self.assertEqual(hashlib.sha256(stream.read()).hexdigest(), expected, source)
         self.assertEqual(len(os.listdir(os.path.join(CDU, 'xsl', 'new'))), 9)

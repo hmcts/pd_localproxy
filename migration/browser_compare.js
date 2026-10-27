@@ -94,6 +94,11 @@ async function main() {
         assert(states[0].initial.pages > 1, 'Scrolling fixture must span multiple pages');
         assert.notStrictEqual(states[0].initial.page, states[0].advanced.page, 'Scroller must advance');
       }
+      if (sample.name.endsWith('Court Detail no notices')) {
+        // Approved fix: an empty result table is one page and rotation continues.
+        assert.strictEqual(states[0].initial.pages, 1, sample.name + ': empty table must be one page');
+        assert(states[0].requests >= 2, sample.name + ': rotation must continue past an empty table');
+      }
       if (sample.name.endsWith('power saving')) assert.strictEqual(states[0].initial.brightness, 'visible');
       if (sample.name === 'Empty feed holding') assert.strictEqual(states[0].requests, 4);
       if (sample.name === 'AJAX three failures') assert.strictEqual(states[0].requests, 3);
