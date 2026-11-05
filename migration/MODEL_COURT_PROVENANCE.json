@@ -1,0 +1,44 @@
+{
+  "approved_local_changes": {
+    "cdu/display_documentNEW.js": {
+      "approved": "2026-10-27",
+      "reason": "An empty result table (e.g. Court Detail with no notices) threw in alignHeaders() and stopped the display requesting new content. It is now treated as one page.",
+      "sha256": "f9b50ca457cf36b81fde8b409ba992d994f1ce75f26e1fb24f41c3a9785ca89b"
+    },
+    "cdu/index.php": {
+      "approved": "2026-10-27",
+      "reason": "python/templates/index.html: if initialise() throws, the shell reports the error and requests the next page instead of freezing on stale content.",
+      "sha256": "ce40b2598f314a4f2d5ea757cc8d1f174cec93373ecc5473ff7d963bf8ab0bd9"
+    }
+  },
+  "cdu_archive_sha256": "1920448a5c1e528dcec20b84a01d46049c5f5259f096c23ede732450506c7978",
+  "files": {
+    "software/checksum.php": "a5633f0d84dd4b0fb48a10964bfbd56511353623139dc5214ed973b057ff231e",
+    "software/download.php": "f39aa68cac5de2ef280d0a816a06c8bf106ae141e70294331c49eff9cb991cc0",
+    "cdu/css/new/general.css": "96d8b66e0c332dcc454331bd81d13aff1aca912af0506561a1489613236cbd06",
+    "cdu/css/new/notifications.css": "1001815632433feebddd7d1371dd37d0b68eef0ba93fa73749fe7e00e81f98f9",
+    "cdu/css/new/table.css": "742271be9cd82cc88e47e6aa7c1acba1fcfe58537a2a0ac8699f9d761ee75703",
+    "cdu/display_documentNEW.js": "3e5a95e6a3f360e7abea8f2d9d16542746a9833e9748b5989e2eb0287b385227",
+    "cdu/images/MoJLogo.png": "b8d558d75c106f8c369ec7fd9af9f871bb96ed6c6b4bdade30dde6d55a28de87",
+    "cdu/images/MoJLogoWelsh.png": "789170646a31fe2b3357411127baee087cc4b7c4a7b1d2e976fd24809e9d9c7f",
+    "cdu/index.php": "686374f3741dd746dd117f270161c80afc0bfcba20b6ce8aa1ec8a78bcb006d2",
+    "cdu/jquery-3.1.1.min.js": "1cf30e59d21d4ae560af7143f5913efcc8222bcaa4fcc7508eb802b5faa9e94e",
+    "cdu/localError.html": "be44e741831be71f1348d44305ea161ce8d387868f98da0734270fb233811963",
+    "cdu/onscreen-clock.js": "e2cf028e8c54ee8a02a057b5de90a02f1f44b244d8a33789790afb9876cdaeb7",
+    "cdu/screenshot.php": "673526300a285ae5d5b3ca8eea69eb76d622df79ffa5576a1b9e474dd8319992",
+    "cdu/xhibit_content.php": "7f6d33dbebd79156c1ffabed613dd46721f0fe6a1cc9d9834af8c9a4b3a31f79",
+    "cdu/xsl/new/all-case-status.xsl": "04041bab99ff6cd73c277dc01f4eb1a0bc2652f1c83ef03ef7f2f2b2d2e076f5",
+    "cdu/xsl/new/all-court-status.xsl": "73be462c3349e9bee7a26cfe8370ad7bf092b78454243ee6c4252e1820ccd584",
+    "cdu/xsl/new/court-room-detail.xsl": "9ddb6dcba837bdd378a30b7b30c41365a5b9c634a22aabc7ccf6950869e54d93",
+    "cdu/xsl/new/court-room-list.xsl": "6efde4c709420a70000cdb2302f06efcf3574a3613188be2f46308dd4a6e016f",
+    "cdu/xsl/new/daily-list.xsl": "5a2088d123e765ef5f69db8701d37122df5953263958e1d934e614db1b6e2c7a",
+    "cdu/xsl/new/jury-current-status.xsl": "b2a6f1f1181e455b3dd59ddc0c60e3ba77ca5233e60c8fef6dd06c9eae2ac06c",
+    "cdu/xsl/new/no-info.xsl": "9b61b902b260596b8e11fbbd10608b56dcbb232dd244a3989a4d89f358949e82",
+    "cdu/xsl/new/summary-by-name.xsl": "d8a151a2254c05e65a1320f0d075ec69f8ca2bd1b9d2432b02caadbbf1509ee7",
+    "cdu/xsl/new/xml2json.xsl": "580927f5fb6a3fc67e261088fe9af8df9973cee23b585dfef8e81ce356ac917a",
+    "xhibit.py": "3da9f12fa2df213dd8b4c49579bf6252644dda7a6b0179cdcd1790cbfad30534",
+    "xhibit_proxy.php": "945acc8f2a829874d17e7ebf6894afb7f81b49beaa7677bd42699b481365aa0b"
+  },
+  "proxy_baseline_commit": "71baef7ccee3f763f609a6abe017507b91d6542a",
+  "scope": "Model Court distribution and two reconstructed production sources, not installed-CDU or fleet verification"
+}

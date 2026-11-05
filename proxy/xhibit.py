@@ -9,9 +9,8 @@
 # 2016-12-01   Sean Bulley       Added "Welsh Title" as an XML element, also support for new URL Mapping table
 # 2016-12-28   Sean Bulley       General tidy and setting config for prod - Updated version to 1.1.0
 #
-CONST_VERSION = "1.1.0"
+CONST_VERSION = "p3.0"
 
-import pymysql
 import sys
 import re
 import configparser
@@ -19,6 +18,7 @@ import urllib.request
 import urllib.parse
 from bs4 import BeautifulSoup
 import os.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'python'))
 import logging
 import platform		# used with syslog to determine the OS type to control which FACILITY to log against
 if (platform.system() != "Windows"):
@@ -35,8 +35,8 @@ errorMsg = ''
 errorCode = ''
 
 # Logging config, can either be CRITICAL for prod or DEBUG for test/dev
-logging.basicConfig(filename='xhibit.log',level=logging.CRITICAL, filemode="w")
-logging.debug('Start logging')
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+pass  # Request contents and credentials are not logged.
 
 #command line format:
 #   "python xhibit.py MACADDRESS PATHTOINIFILE <optional: CURRENTPAGEINDEX [number: 0 or more]> <optional: data_refresh [number: 1]>"
@@ -53,8 +53,8 @@ def iterateSchedules(schedules):
 
 	orderedPowersaveSchedule = sorted(schedules, key=itemgetter('priority'));
 	for thisPrioritySchedule in orderedPowersaveSchedule:
-		logging.debug ("Value: " + thisPrioritySchedule["label"]);
-		logging.debug ("Value: " + str(thisPrioritySchedule["priority"]));
+		pass  # Request contents and credentials are not logged.
+		pass  # Request contents and credentials are not logged.
 		
 		isToday = False;
 		if "date" in thisPrioritySchedule:
@@ -64,6 +64,8 @@ def iterateSchedules(schedules):
 			# check to see if the current date (yyyy-mm-dd) is within the string
 			todaysDate = datetime.date.today();
 			if str(todaysDate) in dayValidator:
+				# Preserve the existing expression (including its todayDate typo).
+				# Changing schedule error behaviour requires a separate compatibility decision.
 				logging.debug(str(todayDate) + " is in " + dayValidator);
 				isToday = True;
 		
@@ -75,10 +77,10 @@ def iterateSchedules(schedules):
 			todayIndexIs = datetime.date.today().weekday();
 			weekdays = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
 			todayIs = weekdays[todayIndexIs];
-			logging.debug ("Today is: " + todayIs);
+			pass  # Request contents and credentials are not logged.
 			
 			if todayIs in dayValidator:
-				logging.debug(todayIs + " is in " + dayValidator);
+				pass  # Request contents and credentials are not logged.
 				isToday = True;
 
 		if isToday:
@@ -102,7 +104,7 @@ def iterateTimeRange(timeRanges):
 	for thisTimeRange in orderedTimeRanges:
 		# validate the input
 		if not (pattern.match(thisTimeRange["from"]) and pattern.match(thisTimeRange["to"])):
-			logging.debug ("Invalid: From (" + thisTimeRange["from"] + "), to (" + thisTimeRange["to"] + ")");
+			pass  # Request contents and credentials are not logged.
 			continue;
 		
 		myFrom = datetime.time(int(thisTimeRange["from"][0:2]), int(thisTimeRange["from"][3:5]));
@@ -117,10 +119,10 @@ def iterateTimeRange(timeRanges):
 		
 		# if found, no need to check anymore ranges
 		if withinTime:
-			logging.debug ("Within range: From (" + thisTimeRange["from"] + "), to (" + thisTimeRange["to"] + ")");
+			pass  # Request contents and credentials are not logged.
 			break;
 		else:
-			logging.debug ("Not in range: From (" + thisTimeRange["from"] + "), to (" + thisTimeRange["to"] + ")");
+			pass  # Request contents and credentials are not logged.
 	
 	return withinTime;
 
@@ -128,9 +130,9 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 	global pageIsEnglish 
 	pageType = None
 	pageXMLstr = "\n\t<PAGE>"
-	logging.debug("formatPageXML") #logging.debug()
+	pass  # Request contents and credentials are not logged.
 	try:
-		logging.debug(soup.title)
+		pass  # Request contents and credentials are not logged.
 		# extract Last Updated from the page
 		myLastUpdated = soup.find('td', { "class" : "last-updated-date" })
 		if myLastUpdated is not None:
@@ -154,9 +156,9 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 		if noInfoDiv is not None:
 			# then there is no info to display
 			pageType = "No Info"
-			logging.debug("No info")
+			pass  # Request contents and credentials are not logged.
 		else:
-			logging.debug("Info")
+			pass  # Request contents and credentials are not logged.
 			# Inspect various different HTML responses from the XHIBIT Public Display application to establish page type - supports both English and Welsh content pages
 			# 1. Daily List => page title is "Public Display: Daily List"
 			# 2. Court Room Detail => page title is "Public Display: Court <number> Detail"; it ends with "Detail"
@@ -165,24 +167,24 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 			# 5. All Case Status -=> page title is "Public Display: All Case Status"
 			# 6. Jury Current Status => page title is "Public Display: Jury Current Status"
 			# 7. All Court Status => page title is "Public Dispaly: All Court Status"
-			logging.debug("pageTitle: " + soup.title.get_text())
+			pass  # Request contents and credentials are not logged.
 			
 			pageTitle = soup.title.get_text()
 			if pageTitle.endswith("All Case Status"):
 				pageType = "All Case Status"
-				logging.debug("Type: All case status")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Summary By Name"):
 				pageType = "Summary by Name"
-				logging.debug("Type: summary by name")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle != "Public Display: Daily List" and pageTitle.endswith("List"):
 				pageType = "Court List"
-				logging.debug("Type: Court list")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Detail"):
 				pageType = "Court Detail"
-				logging.debug("Type: Court detail")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle == "Public Display: Daily List":
 				pageType = "Daily List"
-				logging.debug("Type: Daily list")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Jury Current Status"):
 				pageType = "Jury Current Status"
 			elif pageTitle.endswith("All Court Status"):
@@ -190,26 +192,26 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 			#added to handel Welsh content too
 			elif pageTitle.endswith("Statws Pob Achos"):
 				pageType = "All Case Status"
-				logging.debug("Type: All case status")
-			elif pageTitle == ("Public Display: Crynodeb yn ônw"):
+				pass  # Request contents and credentials are not logged.
+			elif pageTitle == ("Public Display: Crynodeb yn ôl Enw"):
 				pageType = "Summary by Name"
-				logging.debug("Type: summary by name")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Rhestr"):
 				pageType = "Court List"
-				logging.debug("Type: Court list")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Manylion "):
 				pageType = "Court Detail"
-				logging.debug("Type: Court detail")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle == "Public Display: Rhestr Ddyddiol":
 				pageType = "Daily List"
-				logging.debug("Type: Daily list")
+				pass  # Request contents and credentials are not logged.
 			elif pageTitle.endswith("Statws Gyfredol - Rheithgor"):
 				pageType = "Jury Current Status"
 			elif pageTitle.endswith("Statws Pob Llys"):
 				pageType = "All Court Status"
 			else:
 				pageType = "No Info"
-				logging.debug("Type: No info")
+				pass  # Request contents and credentials are not logged.
 
 		pageXMLstr = pageXMLstr + "\n\t\t<TYPE>%s</TYPE>" % pageType
 		pageXMLstr = pageXMLstr + "\n\t</PAGE>"
@@ -233,7 +235,7 @@ def formatPageXML(soup, currentPageIndex, indexUrl):
 	return pageType, pageXMLstr
 
 def formatXML(cduXML, pageXML, contentsXML):
-	logging.debug("formatXML")
+	pass  # Request contents and credentials are not logged.
 	xmlStr = '<?xml version="1.0" encoding="UTF-8"?>'
 	#xmlStr = xmlStr + '\n<?xml-stylesheet type="text/xsl" href="example-xhibit.xsl"?>'
 	xmlStr = xmlStr + "\n<COURT>"
@@ -252,7 +254,7 @@ def formatXML(cduXML, pageXML, contentsXML):
 	return xmlStr
 
 def formatXhibitXML(soup, pageType):
-	logging.debug("formatXhibitXML")
+	pass  # Request contents and credentials are not logged.
 	xmlStr = ""
 	
 	try:
@@ -528,7 +530,7 @@ def formatXhibitXML(soup, pageType):
 						if j.get_text().strip() != "":
 							xmlStr = xmlStr + "\n\t\t\t\t<DEFENDANT>%s</DEFENDANT>" % j.get_text().strip()
 						else:
-							logging.debug("myDefendants j none")
+							pass  # Request contents and credentials are not logged.
 					xmlStr = xmlStr + "\n\t\t\t</DEFENDANTS>"
 					# status
 					myStatus = currentRow.find('td', { "class" : "live-status"})
@@ -555,67 +557,21 @@ def formatXhibitXML(soup, pageType):
 
 # returns the database row contents on success or None of error
 def parseDB(macAddress):
-	logging.debug("parseDB")
-	cduRow = None
-	connection = None
-	global config
-	
-		
-	#=============================================
-	#              CONNECTING TO DB
-	#=============================================
-	#only open db related files/connection/cursor if the MAC address is formated correctly as a parameter
-	try:
-		#get the information needed to connect to the database from the .ini file parameter
-		dbIP = config['DATABASE'].get('DBConn')			# DBconn is in the format "mysql:host=localhost"
-		#if dbIP.startswith('\"') :
-		dbIP = dbIP.strip('"').split('=')[1]
-		dbName = config['DATABASE'].get('DBName')
-		username = config['DATABASE'].get('DBusername')
-		passwd = config['DATABASE'].get('DBpasswd')
-
-		logging.debug("*** Connecting on host [{0}] to database [{1}] with username/password [{2}/{3}] ***".format(dbIP, dbName, username, passwd))
-		
-		# open a database connection
-		connection = pymysql.connect(host=dbIP, user=username, password=passwd, db=dbName, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor)
-		# prepare a cursor object using cursor() method
-		cursor = connection.cursor()
-		#find the cdu with the MAC address passed to the script - using SQL aliases to name obtuse columns, using a "IFNULL" condition
-		#  to decide the priority of the XSL from either CDU or SITE
-		logging.debug("database mac %s" % macAddress.upper())
-		sql = "SELECT CDU.title as title, CDU.location as location, CDU.notification as notification, CDU.macAddress as macAddress, urlMappings.url as url, CDU.refresh as refresh, SITE.title as site, SITE.pageUrl as pageUrl, SITE.powersaveSchedule, SITE.welshTitle FROM CDU, SITE, urlMappings WHERE CDU.fkSITE = SITE.id AND UPPER(CDU.macAddress)='"+macAddress.upper()+"' AND urlMappings.cduID = CDU.id"
-		# execute the SQL query using execute() method.
-		logging.debug("SQL: %s" % sql)
-		cursor.execute(sql)
-		# fetch all of the rows from the query
-		data = cursor.fetchall()
-		# close the cursor object
-		cursor.close()
-		
-		# now check the results of data - there must be one row and one row only
-		if cursor.rowcount == 1:
-			cduRow = data[0]
-		else: 
-			logging.error("Row count > 1")
-		logging.debug("data: %s" % data[0])
-		logging.debug("cduRow: %s" % cduRow)
-	except:
-		global error, errorMsg, errorCode
-		error = True
-		errorMsg = sys.exc_info()
-		errorCode = 'DB_CONNECT'
-		#print(sys.exc_info())
-		
-		if displayError:
-			logging.exception("XHIBIT page parsing")
-		
-	finally:
-		# close the connection
-		if connection is not None:
-			connection.close()
-		#we close the cursor and connection immediately after fetching the data to release expensive database connections
-		
-	return cduRow;
+    """Read the same CDU contract using bound SQL parameters."""
+    global error, errorMsg, errorCode
+    from database import Database
+    database = None
+    try:
+        database = Database.from_parser_config(config)
+        return database.parser_row(macAddress)
+    except Exception as exc:
+        error = True
+        errorMsg = type(exc).__name__
+        errorCode = 'DB_CONNECT'
+        return None
+    finally:
+        if database is not None:
+            database.close()
 
 # returns dictionary of results:
 # xml: is the formatted XML
@@ -635,10 +591,10 @@ def formatCDU(row):
 		xmlStr = xmlStr + "\n\t\t<TITLE>%s</TITLE>" % row['title']
 		xmlStr = xmlStr + "\n\t\t<LOCATION>%s</LOCATION>" % row['location']
 		xmlStr = xmlStr + "\n\t\t<MAC-ADDR>%s</MAC-ADDR>" % row['macAddress'].upper()
-		xmlStr = xmlStr + "\n\t\t<NOTICE>"
 		if (row['notification'] != None):
+			xmlStr = xmlStr + "\n\t\t<NOTICE>"
 			xmlStr = xmlStr + row['notification']
-		xmlStr = xmlStr + "\n\t\t</NOTICE>"
+			xmlStr = xmlStr + "</NOTICE>"
 		
 		# decode the JSON
 		powersave = False
@@ -682,7 +638,7 @@ def formatUrl(url, pageUrl, currentPageIndex, dataRefresh):
 		#  extract the "current page" parameter
 		myURLs = url.split(";")
 		#print(myURLs)
-		logging.debug(myURLs)
+		pass  # Request contents and credentials are not logged.
 				
 		if len(myURLs) == 1:
 			# there is only one URL, so use it
@@ -691,26 +647,26 @@ def formatUrl(url, pageUrl, currentPageIndex, dataRefresh):
 			# there is more than one URL
 			if currentPageIndex == None:
 				# there is no current page argument passed to script, so assume the first page
-				logging.debug("No current Page URL, so assuming the first\n")
+				pass  # Request contents and credentials are not logged.
 				urlIndex = 0
 			else:
 				# current page is defined, so the url is the next one in the list - but not past the end of the array index
 				#   only if not refreshing the current data
 				if dataRefresh is None:
-					logging.debug("Current Page Index (" + str(currentPageIndex) + ") so looking for the next\n")
+					pass  # Request contents and credentials are not logged.
 					urlIndex = (currentPageIndex + 1) % len(myURLs)
 				else:
 					urlIndex = (currentPageIndex) % len(myURLs)
 			
 			thisUrl = myURLs[urlIndex]
-			logging.debug("urlIndex: " + str(urlIndex) + ", Next Url: " + thisUrl + "\n")
+			pass  # Request contents and credentials are not logged.
 			currentPageIndex = urlIndex
 
 		encodedUrl = urllib.parse.urlencode({'uri':thisUrl})
 		fullURL = pageUrl + encodedUrl
 		#fullURL = url
 		#print("Full URL: " + fullURL)
-		logging.debug("Full URL: " + fullURL)
+		pass  # Request contents and credentials are not logged.
 
 	except:
 		# an error occurred extracting
@@ -725,7 +681,7 @@ def formatUrl(url, pageUrl, currentPageIndex, dataRefresh):
 	return currentPageIndex, fullURL
 
 def writeToSyslog(syslogMessage):
-	logging.debug("writeToSysLog: " + syslogMessage)
+	pass  # Request contents and credentials are not logged.
 	if (platform.system() != "Windows"):
 		syslog.openlog(ident="xhibit.py", logoption=syslog.LOG_PID, facility=syslog.LOG_LOCAL5);
 		syslog.syslog(syslog.LOG_ERR, syslogMessage);
@@ -747,145 +703,178 @@ def logError(macAddress, currentPageIndex, errorCode, errorMsg, url, xhibitRespo
 	writeToSyslog(sysLogMessage)		
 	
 	if xhibitResponse is not None:
-		logging.debug("Xhibit Response: " + xhibitResponse + "\n")		
+		pass  # Request contents and credentials are not logged.
 
 	return
 
-macAddress = sys.argv[1]
-iniLoc = sys.argv[2]
-cduOnly = int(sys.argv[3])
-if len(sys.argv) > 4:
-	try:
-		currentPageIndex = int(sys.argv[4])
-	except:
-		currentPageIndex = None
-else:
-	currentPageIndex = None
-if len(sys.argv) > 5:
-	dataRefresh = int(sys.argv[5])
-else:
-	dataRefresh = None
 
-errorUrl = None
-errorXhibitResponse = None
-
-#read the ini file with a config parser
+# CGI processes one request per interpreter. render() is not thread-safe.
+fetch_timeout = None
 displayError = False
-try:
-	config = configparser.ConfigParser()
-	config.read(iniLoc)
-	logging.debug("ini file: " + iniLoc)
-	try:
-		configDisplayError = int(config['ERROR'].get('DisplayError'))
-		if configDisplayError == 1:
-			displayError = True
-	except:
-		# do nothing
-		A=1
-except:
-	error = True
-	errorMsg = sys.exc_info()
-	errorCode = 'CONFIG_FILE'
-	config = None
+config = None
 
-#check the format of the MAC and only proceed with database extraction if correct format
-macFormat = re.compile('.{2}:.{2}:.{2}:.{2}:.{2}:.{2}')
-macValid = macFormat.match(macAddress)
-logging.debug("macValid: %s" % macValid)
-if macValid:
-	logging.debug("macValid true")
-else:
-	logging.debug("macValid false")
 
-if not error and (macValid and os.path.isfile(iniLoc)):
-	logging.debug("not error and mac valid and ini")
-	
-	cduXML = ''
-	pageXML = ''
-	contentsXML = ''
-	
-	cdu = parseDB(macAddress)
-	if not error and (cdu is not None):
-		# format the CDU XML using contents from database; returns the XML, the index URL and page URL
-		cduXML, url, pageUrl = formatCDU(cdu)
-		logging.debug("CDU XML " + cduXML + "\n")
-		logging.debug("URL " + url + "\n")
-		logging.debug("Page ULR " + pageUrl + "\n")
-		
-		if not error:
-			# obtain the site URL to fetch
-			currentPageIndex, siteUrl = formatUrl(url, pageUrl, currentPageIndex, dataRefresh)
-			#if currentPageIndex is not None:
-			#	print("Current Page Index " + currentPageIndex + "\n")
-			#print("Site Url " + siteUrl + "\n")
-			# capture the index URL - in case need for error reporting
-			errorUrl = url
+def _legacy_main(argv):
+    global config, displayError, error, errorMsg, errorCode, pageIsEnglish
+    macAddress = argv[1]
+    iniLoc = argv[2]
+    cduOnly = int(argv[3])
+    if len(argv) > 4:
+        try:
+                currentPageIndex = int(argv[4])
+        except:
+                currentPageIndex = None
+    else:
+        currentPageIndex = None
+    if len(argv) > 5:
+        dataRefresh = int(argv[5])
+    else:
+        dataRefresh = None
 
-		if not error and not cduOnly:
-			# now fetch the XHIBIT page
-			try:
-				logging.debug("siteUrl: " + siteUrl)
-				xhibitContents = urllib.request.urlopen(siteUrl)
-				logging.debug("type: " + type(xhibitContents).__name__)
-				#print (xhibitContents.read()) # commenting out fixes none error
+    errorUrl = None
+    errorXhibitResponse = None
 
-				if not error:
-					# now parse the XHIBIT contents
-					try:
-						soup = BeautifulSoup(xhibitContents, "html.parser")
-						#logging.debug("Xhibit Contents prettified: " + soup.prettify() + "\n")
-						# capture the XHIBIT response for error logging
-						errorXhibitResponse = soup.prettify()[:4500]
-					except:
-						error = True
-						errorMsg = sys.exc_info()
-						errorCode = 'BEAUTIFUL_SOUP_PARSER'
-				
-				if not error:
-					# first extract the page detail
-					pageType, pageXML = formatPageXML(soup, currentPageIndex, url)
-					logging.debug(pageType)
-					logging.debug(pageXML)
-				
-				if not error:
-					# now parse the XHIBIT XML based on the type of page
-					contentsXML = formatXhibitXML(soup, pageType)
-					#print("Contents XML:")
-					logging.debug(contentsXML)
+    #read the ini file with a config parser
+    displayError = False
+    try:
+        config = configparser.RawConfigParser()
+        config.read(iniLoc)
+        pass  # Request contents and credentials are not logged.
+        try:
+                configDisplayError = int(config['ERROR'].get('DisplayError'))
+                if configDisplayError == 1:
+                        displayError = True
+        except:
+                # do nothing
+                A=1
+    except:
+        error = True
+        errorMsg = sys.exc_info()
+        errorCode = 'CONFIG_FILE'
+        config = None
 
-			except:
-				error = True
-				errorMsg = sys.exc_info()
-				errorCode = 'XHIBIT_FETCH' ## error
-					
-		if not error:
-			# now format the full XML to return
-			logging.debug("Printing full XML to file")
-			fullXML = formatXML(cduXML, pageXML, contentsXML)
-			#print (sys.stdout.encoding)
-			print (fullXML)
-			# print just XML to file 
-			#f = open('output.xml','w')
-			#f.write(fullXML)
-			#f.close
-			#logging.debug(fullXML)
-		
-	elif not error:
-		error = True
-		errorMsg = 'Unknown CDU matching %s' % macAddress
-		errorCode = 'MAC-ADDRESS-UNKNOWN'
+    #check the format of the MAC and only proceed with database extraction if correct format
+    macFormat = re.compile('.{2}:.{2}:.{2}:.{2}:.{2}:.{2}')
+    macValid = macFormat.match(macAddress)
+    pass  # Request contents and credentials are not logged.
+    if macValid:
+        pass  # Request contents and credentials are not logged.
+    else:
+        pass  # Request contents and credentials are not logged.
 
-elif not error:
-    error = True
-    errorMsg = 'MAC Address or Ini file not valid'
-    errorCode = 'MAC-ADDRESS-INVALID'
+    if not error and (macValid and os.path.isfile(iniLoc)):
+        pass  # Request contents and credentials are not logged.
 
-# check for errors
-if error:
-	#print("Display Error: (" + str(displayError) + ")\n")
-	# log error
-	logError(macAddress, currentPageIndex, errorCode, str(errorMsg), errorUrl, errorXhibitResponse)
-	
-	if displayError:
-		logging.error("Error occurred: (%s) %s\n" % (errorCode, errorMsg))
+        cduXML = ''
+        pageXML = ''
+        contentsXML = ''
+
+        cdu = parseDB(macAddress)
+        if not error and (cdu is not None):
+                # format the CDU XML using contents from database; returns the XML, the index URL and page URL
+                cduXML, url, pageUrl = formatCDU(cdu)
+                pass  # Request contents and credentials are not logged.
+                pass  # Request contents and credentials are not logged.
+                pass  # Request contents and credentials are not logged.
+
+                if not error:
+                        # obtain the site URL to fetch
+                        currentPageIndex, siteUrl = formatUrl(url, pageUrl, currentPageIndex, dataRefresh)
+                        #if currentPageIndex is not None:
+                        #	print("Current Page Index " + currentPageIndex + "\n")
+                        #print("Site Url " + siteUrl + "\n")
+                        # capture the index URL - in case need for error reporting
+                        errorUrl = url
+
+                if not error and not cduOnly:
+                        # now fetch the XHIBIT page
+                        try:
+                                pass  # Request contents and credentials are not logged.
+                                xhibitContents = urllib.request.urlopen(siteUrl, timeout=fetch_timeout)
+                                pass  # Request contents and credentials are not logged.
+                                #print (xhibitContents.read()) # commenting out fixes none error
+
+                                if not error:
+                                        # now parse the XHIBIT contents
+                                        try:
+                                                soup = BeautifulSoup(xhibitContents, "html.parser")
+                                                #logging.debug("Xhibit Contents prettified: " + soup.prettify() + "\n")
+                                                # capture the XHIBIT response for error logging
+                                                errorXhibitResponse = soup.prettify()[:4500]
+                                        except:
+                                                error = True
+                                                errorMsg = sys.exc_info()
+                                                errorCode = 'BEAUTIFUL_SOUP_PARSER'
+
+                                if not error:
+                                        # first extract the page detail
+                                        pageType, pageXML = formatPageXML(soup, currentPageIndex, url)
+                                        pass  # Request contents and credentials are not logged.
+                                        pass  # Request contents and credentials are not logged.
+
+                                if not error:
+                                        # now parse the XHIBIT XML based on the type of page
+                                        contentsXML = formatXhibitXML(soup, pageType)
+                                        #print("Contents XML:")
+                                        pass  # Request contents and credentials are not logged.
+
+                        except:
+                                error = True
+                                errorMsg = sys.exc_info()
+                                errorCode = 'XHIBIT_FETCH' ## error
+
+                if not error:
+                        # now format the full XML to return
+                        pass  # Request contents and credentials are not logged.
+                        fullXML = formatXML(cduXML, pageXML, contentsXML)
+                        #print (sys.stdout.encoding)
+                        print (fullXML)
+                        # print just XML to file
+                        #f = open('output.xml','w')
+                        #f.write(fullXML)
+                        #f.close
+                        #logging.debug(fullXML)
+
+        elif not error:
+                error = True
+                errorMsg = 'Unknown CDU matching %s' % macAddress
+                errorCode = 'MAC-ADDRESS-UNKNOWN'
+
+    elif not error:
+        error = True
+        errorMsg = 'MAC Address or Ini file not valid'
+        errorCode = 'MAC-ADDRESS-INVALID'
+
+    # check for errors
+    if error:
+        #print("Display Error: (" + str(displayError) + ")\n")
+        # log error
+        logError(macAddress, currentPageIndex, errorCode, str(errorMsg), errorUrl, errorXhibitResponse)
+
+        if displayError:
+                logging.error("Error occurred: (%s) %s\n" % (errorCode, errorMsg))
+
+
+
+def render(mac_address, ini_path, cdu_only=0, current_page_index=None, data_refresh=None,
+           timeout=None):
+    """Return the legacy CLI XML, including its final newline."""
+    import contextlib
+    import io
+    global error, errorMsg, errorCode, pageIsEnglish, fetch_timeout
+    error, errorMsg, errorCode, pageIsEnglish = False, '', '', True
+    fetch_timeout = timeout
+    argv = ["xhibit.py", mac_address, ini_path, str(int(bool(cdu_only)))]
+    if current_page_index is not None:
+        argv.append(str(current_page_index))
+        if data_refresh is not None:
+            argv.append(str(data_refresh))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        _legacy_main(argv)
+    return output.getvalue()
+
+
+if __name__ == "__main__":
+    _legacy_main(sys.argv)
 		

@@ -1,11 +1,17 @@
-This is the XHIBIT Display localproxy.
+XHIBIT Model Court localproxy - Python CGI
 
-It is called by the CDU, giving the MAC Address of the CDU.
+The proxy preserves the Model Court p3.0 XML contract. Required database columns
+include CDU.cduNumber and SITE.welshTitle, with urlMappings; there is no migration
+or silent fallback. Software endpoints serve an explicitly configured Python-only
+cdu.tar. Legacy .php URLs are Apache aliases, not PHP source files.
 
-I uses the Mac Address to lookup from local proxy database the attributes
-of the CDU, including the URL of the page to display.
+Manager is optional, default OFF and not production-verified. Use --with-manager
+consistently for packaging, Apache generation and preflight to include it.
+Existing form field names and database/audit semantics remain unchanged; output
+escaping and a CSRF token check are security-only additions. The manager needs a
+random managerCsrfSecret (see config/ops.ini.example) or it refuses all POSTs.
 
-It uses the URL to fetch the content and then uses a local python script to
-transform the HTML fetched to XML, and finally, enriches the XML with data
-from the local proxy database to be used by the CDU (e.g. the CDU title and
-location).
+See migration/README.md and migration/VALIDATION.md for build/test/pilot/rollback
+instructions and outstanding gates. Keep pd_cdu alongside this checkout.
+No push, deployment, host PHP removal, runtime upgrade or database migration is
+performed by the tooling. Account for external PHP consumers before host removal.

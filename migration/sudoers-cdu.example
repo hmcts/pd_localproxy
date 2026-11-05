@@ -1,0 +1,5 @@
+# Install as root:root 0440 after visudo -cf validation.
+# Debian/Raspberry Pi OS. Substitute apache for www-data only on a verified RHEL CDU.
+# Keep screencapture.sh root-owned and not writable by www-data or xhibit.
+# Only the fixed capture script and -f argument are permitted (never a shell).
+www-data ALL=(xhibit) NOPASSWD: /usr/local/libexec/xhibit-capture *-www-data
